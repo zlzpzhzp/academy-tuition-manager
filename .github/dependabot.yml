@@ -1,0 +1,35 @@
+version: 2
+# 의존성 자동 업데이트 (2026-08-01 신설, 운영자 지시)
+#
+# 왜: 업계표준 점검에서 **의존성 자동 업데이트 0/7** 이 가장 큰 빈칸이었다.
+#   지금까지는 보안 구멍이 생겨도 우리가 npm audit 을 직접 돌려야 알았다 = 사람이 안 하면 영영 모른다.
+#
+# 왜 Dependabot 인가: **우리 서버에 아무것도 설치하지 않는다.** GitHub 이 대신 보고 PR 만 올린다.
+#   Renovate 등은 앱/러너 설치가 필요해 공급망 표면이 늘어난다([[feedback_npm_supply_chain]]).
+#
+# 🔴 PR 은 **자동 머지되지 않는다.** 사람이 보고 머지한다. 이건 의도된 것이다 —
+#   자동 머지는 공급망 감염을 그대로 통과시키는 문이다(비가역).
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Asia/Seoul"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+      prefix-development: "deps-dev"
+    groups:
+      # 묶어서 올린다 — 개별 PR 이 쏟아지면 아무도 안 본다(노이즈=미확인).
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # 메이저는 자동 제안하지 않는다. Next/React 메이저는 우리가 계획하고 올린다.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"

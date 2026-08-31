@@ -1,0 +1,25 @@
+{
+  "name": "출결 키오스크",
+  "short_name": "출결",
+  "description": "학원 출결 키오스크",
+  "start_url": "/kiosk",
+  "scope": "/kiosk",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#070b14",
+  "theme_color": "#070b14",
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

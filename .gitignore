@@ -1,0 +1,61 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/.next
+# 빌드·릴리스 분리(2026-08-01): 배포는 .next-<sha> 로 빌드하고 심링크만 갈아끼운다.
+# 이 산출물이 커밋되면 prerender-manifest 의 프리뷰 토큰 등이 그대로 올라간다(gitleaks 가 잡아줬다).
+.next-*
+
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files
+.env*.local
+# 백업/스왑 파일도 차단 (2026-06-19 .env.local.bak-keyswap 노출 사고 — .env*.local 패턴이 .bak 접미사를 못 걸렀음)
+.env*.bak*
+.env.local.bak*
+*.bak
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+.secrets/
+.playwright-mcp/
+
+# 런타임 로그 — 시크릿(키·PIN·토큰)이 평문으로 섞여 들어올 수 있다
+*.log
+*.log.*
+
+# 로컬 메모·운영 기록. 학생 실명·연락처 같은 개인정보가 들어가기 쉬운 자리라
+# 처음부터 추적하지 않는다. 실수로 커밋되면 git 히스토리에서 지우기가 매우 어렵다.
+WORK_CONTEXT.md
+notes.local.md
+
+__pycache__/

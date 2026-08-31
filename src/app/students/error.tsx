@@ -1,0 +1,18 @@
+'use client'
+
+import { useEffect } from 'react'
+
+export default function Error({ error, reset }: { error: Error & { digest?: string }; reset: () => void }) {
+  // 에러 객체를 버리면 페이지 크래시가 어디에도 안 남는다 (2026-08-13 라인리뷰)
+  useEffect(() => {
+    console.error('[students] 페이지 크래시:', error)
+  }, [error])
+  return (
+    <div className="flex flex-col items-center justify-center py-20">
+      <p className="text-[var(--text-3)] mb-4">문제가 발생했습니다{error.digest ? ` (${error.digest})` : ''}</p>
+      <button onClick={reset} className="px-4 py-2 bg-[var(--blue)] text-white rounded-lg hover:opacity-90">
+        다시 시도
+      </button>
+    </div>
+  )
+}

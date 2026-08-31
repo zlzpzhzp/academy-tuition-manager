@@ -1,0 +1,48 @@
+{
+  "name": "tuition-manager",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "for f in tests/e2e/*.mjs; do echo === $f ===; node $f || exit 1; done"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@sentry/nextjs": "^10.53.1",
+    "@supabase/supabase-js": "^2.99.1",
+    "date-fns": "^4.1.0",
+    "framer-motion": "^12.38.0",
+    "lucide-react": "^0.577.0",
+    "next": "^16.2.12",
+    "pretendard": "^1.3.9",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "sonner": "^2.0.7",
+    "swr": "^2.4.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitest/coverage-v8": "^4.1.2",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "jsdom": "^29.0.0",
+    "playwright": "^1.59.1",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "^4.1.2"
+  },
+  "overrides": {
+    "postcss": "^8.5.13"
+  },
+  "description": "학원 원비·청구·출결 관리 시스템 (Next.js + Supabase)",
+  "license": "MIT"
+}
