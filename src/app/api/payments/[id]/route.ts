@@ -22,7 +22,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   // (payssam→card로 바꾸면 청구서와 어긋나고 payssam 삭제금지 정책도 우회됨. 역방향은 콜백 전용 기록 위조)
   const { data: current } = await supabase
     .from('tuition_payments')
-    .select('method, deleted_at')
+    .select('method, deleted_at, memo')
     .eq('id', id)
     .single()
   if (!current) return NextResponse.json({ error: '납부 기록을 찾을 수 없습니다' }, { status: 404 })
@@ -37,7 +37,11 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   if (body.amount !== undefined) updates.amount = body.amount
   if (body.method !== undefined) updates.method = body.method
   if (body.payment_date !== undefined) updates.payment_date = body.payment_date
-  if (body.memo !== undefined) updates.memo = body.memo || null
+  if (body.memo !== undefined) {
+    const billTags = current.memo?.match(/\[bill:[^\]]+\]/g) ?? []
+    const memo = (body.memo || '').replace(/\[bill:[^\]]+\]/g, '')
+    updates.memo = `${memo}${billTags.join('')}` || null
+  }
 
   const { data, error } = await supabase
     .from('tuition_payments')
@@ -60,11 +64,17 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   const { id } = await params
 
   // 삭제 전 데이터 조회
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from('tuition_payments')
     .select('*, student:tuition_students(name)')
     .eq('id', id)
-    .single()
+    .maybeSingle()
+
+  if (existingError) {
+    console.error('[payments DELETE] 선조회 실패 — 삭제 중단:', id, existingError)
+    return NextResponse.json({ error: '납부 기록 조회에 실패했습니다. 삭제하지 않았습니다.' }, { status: 500 })
+  }
+  if (!existing) return NextResponse.json({ error: '납부 기록을 찾을 수 없습니다' }, { status: 404 })
 
   // 2026-07-02 사용자 지시: 결제선생 자동수납 건은 개별 삭제 금지.
   // 결제선생 결제는 청구서 취소(환불) 플로우(/api/payssam/cancel·resettle)에서만 soft-delete된다.

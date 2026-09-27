@@ -13,7 +13,7 @@ import StudentModal from '@/components/StudentModal'
 import PaymentModal from '@/components/PaymentModal'
 import DayOfMonthPicker from '@/components/DayOfMonthPicker'
 import DatePickerPopup from '@/components/payments/DatePickerPopup'
-import { ModalContentSkeleton } from '@/components/Skeleton'
+import { StudentDetailSkeleton } from '@/components/Skeleton'
 import Student360Section from '@/components/Student360Section'
 import EmptyState from '@/components/ui/EmptyState'
 import { safeFetch, safeMutate, getTodayString } from '@/lib/utils'
@@ -244,12 +244,12 @@ export default function StudentDetailModal({ studentId, onClose: onCloseRaw, onC
         </div>
 
         {loading ? (
-          <ModalContentSkeleton />
+          <StudentDetailSkeleton />
         ) : !student ? (
           <EmptyState title="학생을 찾을 수 없습니다" size="page" />
         ) : (
           <div className="p-4 space-y-4">
-            <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-4">
+            <div data-paper-card="" className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-4">
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <p className="text-sm text-[var(--text-4)]">
@@ -270,7 +270,7 @@ export default function StudentDetailModal({ studentId, onClose: onCloseRaw, onC
                 <div>
                   <span className="text-[var(--text-4)]">학교</span>
                   <p className="font-medium">
-                    {(student.school ?? '').trim() || <span className="text-[var(--orange)] text-xs font-semibold">미입력 — 수정(연필)에서 입력</span>}
+                    {(student.school ?? '').trim() || <span className="text-[var(--scheduled-text)] text-xs font-semibold">미입력 — 수정(연필)에서 입력</span>}
                   </p>
                 </div>
                 <div>
@@ -384,7 +384,7 @@ export default function StudentDetailModal({ studentId, onClose: onCloseRaw, onC
                           key={c}
                           type="button"
                           onClick={() => setMemoColor(active ? null : c)}
-                          className={`w-4 h-4 rounded-full ${dot} ${active ? 'ring-2 ring-white/80' : 'opacity-50'}`}
+                          className={`w-4 h-4 rounded-full ${dot} ${active ? 'ring-2 ring-[var(--text-1)]' : 'opacity-50'}`}
                           aria-label={`색상 ${c}`}
                         />
                       )
@@ -403,7 +403,7 @@ export default function StudentDetailModal({ studentId, onClose: onCloseRaw, onC
                   <TButton
                     onClick={handleSaveMemo}
                     disabled={memoSaving}
-                    className={`p-2 rounded-lg shrink-0 transition-all ${memoSavedFlash ? 'bg-[var(--paid-bg)] text-[var(--paid-text)] scale-110' : 'bg-[var(--blue)] text-white hover:opacity-80'}`}
+                    className={`p-2 rounded-lg shrink-0 transition-all ${memoSavedFlash ? 'bg-[var(--paid-bg)] text-[var(--paid-text)] scale-110' : 'bg-[var(--blue)] text-[var(--on-action)] hover:opacity-80'}`}
                     aria-label="비고 저장"
                   >
                     <Check className="w-4 h-4" />
@@ -455,10 +455,10 @@ export default function StudentDetailModal({ studentId, onClose: onCloseRaw, onC
               )}
             </div>
 
-            {/* 학생 360 — 쌤·질문·성적·상담 교차 조회(읽기 전용). 기본 접힘 + 펼칠 때만 fetch (2026-08-19 지시) */}
+            {/* 학생 360 — 강사 앱·질문·성적·상담 교차 조회(읽기 전용). 기본 접힘 + 펼칠 때만 fetch (2026-08-19 지시) */}
             <Student360Section studentId={studentId} />
 
-            <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-4">
+            <div data-paper-card="" className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-bold text-sm">이번달 납부현황</h3>
                 <span
@@ -476,14 +476,14 @@ export default function StudentDetailModal({ studentId, onClose: onCloseRaw, onC
                 </div>
                 <TButton
                   onClick={() => setShowPaymentModal(true)}
-                  className="px-3 py-2 bg-[var(--blue)] text-white rounded-lg text-sm font-medium flex items-center gap-1 hover:opacity-90"
+                  className="px-3 py-2 bg-[var(--blue)] text-[var(--on-action)] rounded-lg text-sm font-medium flex items-center gap-1 hover:opacity-90"
                 >
                   <CreditCard className="w-4 h-4" /> 납부 기록
                 </TButton>
               </div>
             </div>
 
-            <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-4">
+            <div data-paper-card="" className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-4">
               <TButton
                 onClick={() => setShowRefundCalc(!showRefundCalc)}
                 className="flex items-center gap-2 font-bold text-sm w-full text-left"
@@ -544,7 +544,7 @@ export default function StudentDetailModal({ studentId, onClose: onCloseRaw, onC
               )}
             </div>
 
-            <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-4">
+            <div data-paper-card="" className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-bold text-sm">납부 내역</h3>
                 <TButton
@@ -584,7 +584,7 @@ export default function StudentDetailModal({ studentId, onClose: onCloseRaw, onC
                                 <span className="font-medium">{formatWon(p.amount)}</span>
                                 <span className="text-[var(--text-4)] ml-2">{PAYMENT_METHOD_LABELS[p.method as keyof typeof PAYMENT_METHOD_LABELS]}</span>
                                 {p.cash_receipt && (
-                                  <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded ${p.cash_receipt === 'issued' ? 'bg-[var(--green-dim)] text-[var(--paid-text)]' : 'bg-[var(--orange-dim)] text-[var(--orange)]'}`}>
+                                  <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded ${p.cash_receipt === 'issued' ? 'bg-[var(--green-dim)] text-[var(--paid-text)]' : 'bg-[var(--orange-dim)] text-[var(--scheduled-text)]'}`}>
                                     {CASH_RECEIPT_LABELS[p.cash_receipt]}
                                   </span>
                                 )}

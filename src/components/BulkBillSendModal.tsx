@@ -2,7 +2,8 @@
 
 import { useState, useCallback, useMemo } from 'react'
 import { useAnimatedClose } from '@/lib/useAnimatedClose'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
+import { motion } from '@/components/paperMotion'
 import { X, Send, AlertTriangle, Check, Loader2, Bell } from 'lucide-react'
 import { TButton } from '@/components/motion'
 import { formatWon } from '@/lib/format'
@@ -53,12 +54,12 @@ export default function BulkBillSendModal({ className, targets, onClose: onClose
       onClose={() => { if (state !== 'sending') onClose() }}
       closeOnBackdrop={state !== 'sending'}
     >
-      <div
+      <div data-paper-card=""
         className="bg-[var(--bg-card)] w-full rounded-2xl max-h-[88vh] flex flex-col"
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-[var(--bg-card)] z-10">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-[var(--bg-card)] z-10 rounded-t-[inherit]">
           <h2 className="text-base font-bold tracking-tight flex items-center gap-2">
-            {isResend ? <Bell className="w-4 h-4 text-[var(--orange)]" /> : <Send className="w-4 h-4 text-[var(--orange)]" />}
+            {isResend ? <Bell className="w-4 h-4 text-[var(--scheduled-text)]" /> : <Send className="w-4 h-4 text-[var(--scheduled-text)]" />}
             {isResend ? '미결제 일괄 재발송' : '일괄 청구서 발송'}
             <span className="text-xs font-normal text-[var(--text-4)]">{className}</span>
           </h2>
@@ -112,8 +113,8 @@ export default function BulkBillSendModal({ className, targets, onClose: onClose
                 exit={{ opacity: 0, y: -5 }}
                 className="flex items-start gap-2 p-3 bg-[var(--orange-dim)] rounded-xl"
               >
-                <AlertTriangle className="w-4 h-4 text-[var(--orange)] shrink-0 mt-0.5" />
-                <p className="text-sm text-[var(--orange)]">
+                <AlertTriangle className="w-4 h-4 text-[var(--scheduled-text)] shrink-0 mt-0.5" />
+                <p className="text-sm text-[var(--scheduled-text)]">
                   {isResend
                     ? <><strong>{targets.length}명</strong>에게 미결제 알림을 일괄 재발송합니다. 이미 결제된 학생은 자동 제외됩니다.</>
                     : <><strong>{targets.length}명</strong>에게 <strong>{formatWon(total)}</strong> 청구서를 일괄 발송합니다. 실행하시겠습니까?</>}
@@ -136,10 +137,10 @@ export default function BulkBillSendModal({ className, targets, onClose: onClose
             disabled={state === 'sending' || targets.length === 0}
             className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${
               state === 'confirming'
-                ? 'bg-[var(--orange)] text-white hover:opacity-90'
+                ? 'bg-[var(--orange)] text-[var(--on-action)] hover:opacity-90'
                 : state === 'sending'
-                  ? 'bg-[var(--blue)] text-white opacity-70 cursor-not-allowed'
-                  : 'bg-[var(--blue)] text-white hover:opacity-90 disabled:opacity-30'
+                  ? 'bg-[var(--blue)] text-[var(--on-action)] opacity-70 cursor-not-allowed'
+                  : 'bg-[var(--blue)] text-[var(--on-action)] hover:opacity-90 disabled:opacity-30'
             }`}
           >
             {state === 'sending' ? (

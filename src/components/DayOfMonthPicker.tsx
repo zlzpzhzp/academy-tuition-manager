@@ -1,7 +1,8 @@
 'use client'
 
 import { createPortal } from 'react-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
+import { motion } from '@/components/paperMotion'
 import { X, Check } from 'lucide-react'
 import { TButton } from '@/components/motion'
 
@@ -24,10 +25,10 @@ export default function DayOfMonthPicker({ open, value, onChange, onClose, title
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[80] flex items-center justify-center p-4"
+      className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-[80] flex items-center justify-center p-4"
       onClick={onClose}
     >
-      <motion.div
+      <motion.div data-paper-card=""
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
@@ -58,7 +59,7 @@ export default function DayOfMonthPicker({ open, value, onChange, onClose, title
                 onClick={() => { onChange(day); onClose() }}
                 className={`aspect-square rounded-lg text-xs font-semibold transition-colors ${
                   selected
-                    ? 'bg-[var(--blue)] text-white'
+                    ? 'bg-[var(--blue)] text-[var(--on-action)]'
                     : 'text-[var(--text-2)] hover:bg-[var(--bg-elevated)]'
                 }`}
               >

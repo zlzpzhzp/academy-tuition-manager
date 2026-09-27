@@ -106,6 +106,45 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 영업시간 외에 예약해 둔 같은 특강의 결제선생 발송(큐 pending)도 취소한다 — 위 파기 대상은 status='sent'
+    // (이미 발송된 것)만 잡아서, 아직 안 나간 예약분은 다음 영업일 11시에 현금으로 낸 특강 링크가 그대로 나갔다.
+    // (2026-09-06 코드비판 ②) 되돌리기(DELETE) 때 복원할 수 있게 payload 에 납부 id 를 남긴다.
+    const { data: pendingSends, error: pendingSendsError } = await supabase
+      .from('tuition_bill_queue')
+      .select('id, payload')
+      .eq('student_id', studentId)
+      .eq('is_regular_tuition', false)
+      .eq('bill_note', paidLabel)
+      .eq('status', 'pending')
+      .in('send_type', ['single', 'reissue'])
+    if (pendingSendsError) {
+      console.error('[special/pay] 예약 발송 조회 실패:', studentId, pendingSendsError)
+      destroyScheduleFailed.push('(예약 조회 실패)')
+      await writeAuditLog('payment', studentId, 'update',
+        `⚠️ 특강비 ${METHOD_LABEL[method] || method} 납부 기록됨 but 예약 발송 조회 실패: ${paidLabel} — 예약된 특강 청구서가 그대로 나갈 수 있음, 큐 수동 확인 필요`,
+        { specialPaymentId: data.id, error: pendingSendsError.message })
+    }
+    for (const row of pendingSends ?? []) {
+      const payload = (row.payload && typeof row.payload === 'object') ? row.payload as Record<string, unknown> : {}
+      const { error: cancelError } = await supabase
+        .from('tuition_bill_queue')
+        .update({
+          status: 'cancelled',
+          error_msg: `특강비 ${METHOD_LABEL[method] || method} 직접 납부로 예약 발송 취소`,
+          sent_at: new Date().toISOString(),
+          payload: { ...payload, cancelledBySpecialPaymentId: data.id },
+        })
+        .eq('id', row.id)
+        .eq('status', 'pending')
+      if (cancelError) {
+        console.error('[special/pay] 예약 발송 취소 실패:', row.id, cancelError)
+        destroyScheduleFailed.push(`queue:${row.id}`)
+        await writeAuditLog('payment', studentId, 'update',
+          `⚠️ 특강비 납부 기록됨 but 예약 발송 취소 실패: ${paidLabel} queue ${row.id} — 예약된 특강 청구서가 그대로 나갈 수 있음, 수동 취소 필요`,
+          { specialPaymentId: data.id, queueId: row.id, error: cancelError.message })
+      }
+    }
+
     await writeAuditLog('payment', studentId, 'create',
       `특강비 직접 납부 기록: ${data.label} ${Number(amount).toLocaleString()}원 (${METHOD_LABEL[method] || method}, ${paidDate})`,
       { specialPaymentId: data.id, amount, method, label: data.label, paidAt: paidDate })
@@ -150,10 +189,24 @@ export async function DELETE(request: NextRequest) {
       console.error('[special/pay DELETE] 파기 예약 해제 실패:', id, queueError)
       return NextResponse.json({ error: '납부는 취소됐으나 파기 예약 해제에 실패했습니다. 청구서 파기 예약을 수동 확인하세요.' }, { status: 500 })
     }
+    // POST 가 취소한 예약 발송(영업시간 외 특강 청구)도 되살린다 — 착각 입력을 되돌렸으면 원래 예약대로 나가야 한다.
+    const { data: restored, error: restoreError } = await supabase
+      .from('tuition_bill_queue')
+      .update({ status: 'pending', error_msg: null, sent_at: null })
+      .eq('status', 'cancelled')
+      .in('send_type', ['single', 'reissue'])
+      .filter('payload->>cancelledBySpecialPaymentId', 'eq', id)
+      .select('id')
+    if (restoreError) {
+      console.error('[special/pay DELETE] 예약 발송 복원 실패:', id, restoreError)
+      await writeAuditLog('payment', null, 'update',
+        `⚠️ 특강비 납부 취소됨 but 취소했던 예약 발송 복원 실패: payment ${id} — 특강 청구서 예약이 안 나감, 큐 수동 확인 필요`,
+        { specialPaymentId: id, error: restoreError.message })
+    }
     await writeAuditLog('payment', null, 'delete',
-      `특강비 직접 납부 취소(soft-delete): payment ${id} — 파기 예약 ${cancelled?.length ?? 0}건 해제`,
-      { specialPaymentId: id, cancelledDestroys: cancelled?.length ?? 0 })
-    return NextResponse.json({ ok: true, cancelledDestroys: cancelled?.length ?? 0 })
+      `특강비 직접 납부 취소(soft-delete): payment ${id} — 파기 예약 ${cancelled?.length ?? 0}건 해제, 예약 발송 ${restored?.length ?? 0}건 복원`,
+      { specialPaymentId: id, cancelledDestroys: cancelled?.length ?? 0, restoredSends: restored?.length ?? 0 })
+    return NextResponse.json({ ok: true, cancelledDestroys: cancelled?.length ?? 0, restoredSends: restored?.length ?? 0 })
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : '오류' }, { status: 500 })
   }

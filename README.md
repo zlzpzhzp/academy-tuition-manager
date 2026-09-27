@@ -16,33 +16,44 @@ Next.js(App Router) + Supabase 위에 올라가 있고, **Supabase 프로젝트�
 
 ## 스크린샷
 
-> 아래 화면의 이름·연락처·금액은 전부 데모 데이터입니다(`supabase/seed-demo.sql`).
-> 실제 학생 정보가 아닙니다.
+> 아래 화면의 이름·연락처·금액은 전부 가상의 데모 데이터입니다. 실제 학생 정보가 아닙니다.
+> (DB 없이 격리 빌드를 띄우고 모든 API 응답을 데모 JSON 으로 가로채서 찍었습니다.)
 
 ### 납부 관리 — 이 앱의 중심 화면
 
-학년 → 반 → 학생 트리. 학생마다 이번 달 상태(완납·미납·분할)와 결제 수단이 한 줄에 붙습니다.
-완납된 반은 접히고, 미납이 남은 반은 펼쳐진 채로 눈에 띕니다.
+학년 → 반 → 학생 트리. 학생마다 이번 달 상태(완납·미납·부분납)와 결제 수단이 한 줄에 붙습니다.
+완납된 반은 접히고, 미납이 남은 반은 펼쳐진 채로 눈에 띕니다. 상단 헤더는 스크롤하면
+제목·배경·화살표가 한 진행도에 맞춰 부드럽게 줄어듭니다(아래 [디자인과 동작](#디자인과-동작) 참조).
 
 ![납부 관리](docs/screenshots/payments.png)
 
+### 어두운 화면 톤
+
+설정에서 **자동(OS 따라가기) / 밝게 / 어둡게** 를 고릅니다. 밝은 쪽은 아이보리 종이 질감,
+어두운 쪽은 남색 잉크 톤입니다. 첫 화면이 그려지기 전에 톤이 정해져서 깜빡임이 없습니다.
+
+| 납부 (어둡게) | 대시보드 (어둡게) |
+|---|---|
+| ![납부 어둡게](docs/screenshots/payments-dark.png) | ![대시보드 어둡게](docs/screenshots/dashboard-dark.png) |
+
 ### 대시보드
 
-재원생 수, 납부율, 수납액(지난달 대비), 미납 인원. 이번 달 신규·퇴원도 함께 봅니다.
+재원생 수, 납부율, 수납액(지난달 대비), 미납 인원. 이번 달 신규·퇴원과 월별 매출 미니 카드도 함께 봅니다.
 
 ![대시보드](docs/screenshots/dashboard.png)
+
+### 월별 매출 추이
+
+수납·예정 원비·특강 매출을 월별 선으로, 선생님·과목·결제수단별 구성을 누적 막대로 봅니다.
+차트는 외부 라이브러리 없이 SVG 로 직접 그립니다.
+
+![월별 매출](docs/screenshots/stats.png)
 
 ### 청구서 (결제 대행사 연동)
 
 발송·수납 현황을 최신순으로. "3일 이상 미결제"처럼 사람이 손을 대야 하는 건을 위로 올립니다.
 
 ![청구서](docs/screenshots/billing.png)
-
-### 재무 (PIN 게이트 뒤)
-
-월별 손익과 강사별 급여 배분. 관리자 로그인 위에 PIN을 한 겹 더 요구합니다.
-
-![재무](docs/screenshots/finance.png)
 
 ### 출결
 
@@ -53,30 +64,35 @@ Next.js(App Router) + Supabase 위에 올라가 있고, **Supabase 프로젝트�
 ### 출결 키오스크
 
 학원 입구 태블릿에 띄워두는 전체화면 모드. 학생이 자기 코드 4자리를 누르면
-등·하원이 기록되고 학부모에게 알림톡이 나갑니다.
+등·하원이 기록되고 학부모에게 알림톡이 나갑니다. 오늘이 그 학생의 수업일이 아니면
+기록하기 **전에** 한 번 더 확인합니다(번호 한 자리 오입력으로 엉뚱한 학부모에게 알림이 가는 걸 막기 위해).
 
 ![키오스크](docs/screenshots/kiosk.png)
 
 <details>
-<summary><b>그 밖의 화면</b> — 학생 관리 · 설정 · 특강 · AI 필터 · 로그인</summary>
+<summary><b>그 밖의 화면</b> — 재무 · 학생 관리 · 설정 · 특강 · AI 에이전트 · 로그인</summary>
 
 | | |
 |---|---|
-| **학생 관리** ![학생](docs/screenshots/students.png) | **설정 (학년·반 편성)** ![설정](docs/screenshots/settings.png) |
-| **특강** ![특강](docs/screenshots/special.png) | **AI 에이전트** ![AI](docs/screenshots/agent.png) |
-| **로그인** ![로그인](docs/screenshots/login.png) | |
+| **재무 (PIN 게이트 뒤)** ![재무](docs/screenshots/finance.png) | **학생 관리** ![학생](docs/screenshots/students.png) |
+| **설정 (학년·반 편성·화면 톤)** ![설정](docs/screenshots/settings.png) | **특강** ![특강](docs/screenshots/special.png) |
+| **AI 에이전트** ![AI](docs/screenshots/agent.png) | **로그인** ![로그인](docs/screenshots/login.png) |
 
 </details>
 
-<details>
+<details open>
 <summary><b>모바일</b> — 실제로는 폰에서 더 많이 씁니다</summary>
 
 원비 확인과 출결 체크는 앉아서 하는 일이 아니라 오가면서 하는 일이라,
 모바일 레이아웃이 곁다리가 아니라 주 사용 환경에 가깝습니다. PWA로 설치도 됩니다.
 
-| 납부 | 대시보드 | 출결 |
+| 납부 | 납부 (스크롤 중 — 월 이동 줄만 고정) | 납부 (어둡게) |
 |---|---|---|
-| <img src="docs/screenshots/mobile-payments.png" width="260"> | <img src="docs/screenshots/mobile-dashboard.png" width="260"> | <img src="docs/screenshots/mobile-attendance.png" width="260"> |
+| <img src="docs/screenshots/mobile-payments.png" width="240"> | <img src="docs/screenshots/mobile-payments-scrolled.png" width="240"> | <img src="docs/screenshots/mobile-payments-dark.png" width="240"> |
+
+| 대시보드 | 월별 매출 | 출결 |
+|---|---|---|
+| <img src="docs/screenshots/mobile-dashboard.png" width="240"> | <img src="docs/screenshots/mobile-stats.png" width="240"> | <img src="docs/screenshots/mobile-attendance.png" width="240"> |
 
 </details>
 
@@ -92,9 +108,14 @@ Next.js(App Router) + Supabase 위에 올라가 있고, **Supabase 프로젝트�
   재발송, 파기, 취소(환불), 퇴원 정산 재청구까지. **이중청구 가드가 여러 겹 들어가 있습니다.**
 - **출결** — 날짜별 출/지/조/결/보 기록. 전용 **키오스크 화면**이 따로 있어서
   학생이 태블릿에 자기 코드를 눌러 등·하원하면 학부모에게 알림톡이 나갑니다.
+  학생별로 **추가 수신 번호**(예: 돌봄 선생님)를 두면 양쪽에 같이 보냅니다.
 - **특강** — 정규 수업과 별개로 기간을 정해 열리는 수업. 그룹 편성과 별도 정산.
 - **재무** — 월별 매출·지출·강사 급여 배분. 관리자 로그인 위에 **PIN 한 겹을 더** 씌웠습니다.
+- **월별 매출 추이** — 수납·예정 원비·특강을 월별로, 선생님·과목·결제수단별 구성과 함께.
+- **청구지연 필터** — 결제일이 지났는데 그 달 청구서가 아직 안 나간 학생만 모아 봅니다.
+  결제일 달력에서 늦은 날짜가 빨갛게 표시되고, 그대로 일괄 발송 대상이 됩니다.
 - **AI 에이전트** — "이번 달 미납인 고2 학생 보여줘" 같은 자연어로 명단을 걸러냅니다.
+  1순위 모델이 막히면 다른 실패 도메인의 모델로 넘어가는 폴백 체인이 있습니다.
 - **감사 로그** — 돈과 학생 정보를 바꾼 모든 행위를 기록합니다. 지운 적 없이 쌓입니다.
 
 ### 설계에서 양보하지 않은 것들
@@ -108,6 +129,31 @@ Next.js(App Router) + Supabase 위에 올라가 있고, **Supabase 프로젝트�
 - **발송은 사람이 누릅니다.** 자동 재발송은 의도적으로 꺼져 있습니다.
 - **타임존은 KST 고정입니다.** 날짜 경계가 곧 청구 월이라 `toISOString()` 계열은
   코드에서 금지돼 있습니다(`src/lib/date.ts` 참조).
+- **결과가 불명확하면 재시도하지 않습니다.** 결제 대행사 호출이 타임아웃 등으로 끝나 성공 여부를
+  알 수 없으면 '실패'로 기록하고 사람에게 넘깁니다 — 자동 재시도는 이중 청구의 지름길입니다.
+  같은 학생·같은 달 청구는 프로세스 안에서 키별 락(`src/lib/keyedLock.ts`)으로 직렬화합니다.
+- **조회가 실패하면 쓰기를 막습니다(fail-closed).** 돈이 걸린 경로에서 선조회 에러를
+  "기록 없음"으로 읽으면 중복 청구·잘못된 환불로 이어집니다.
+- **퇴원생 문자는 '정산 종결' 뒤에 막습니다.** 퇴원 직후가 정산 안내가 가장 필요한 때라,
+  퇴원 표시만으로 막지 않고 정산 상태 전체를 종합해 판정합니다.
+
+### 디자인과 동작
+
+기능만큼 **끊김 없는 동작**을 완료 기준으로 봅니다.
+
+- **종이 테마** — 밝은 아이보리(D3) 바탕에 얇은 그레인. 그레인은 스크롤 비용을 재 보고
+  `mix-blend-mode: normal` + 낮은 불투명도로 골랐습니다(`multiply` 는 스크롤 프레임 시간을 두 배로 늘렸습니다).
+- **어두운 톤(남색 잉크)** — 색은 전부 CSS 토큰이고 밝음·어두움 두 블록에 같이 정의됩니다.
+  두 톤 모두 **본문 대비 4.5:1 이상**을 단위 테스트가 검사합니다(`darkPaperTheme.test.ts`).
+  톤 결정은 `src/lib/paperScheme.ts` 한 곳이 맡고, 첫 페인트 전에 `<html>` 에 박아 깜빡임을 없앱니다.
+- **스크롤 연동 헤더** — 접힘 상태기계 없이 자연 스크롤. 진행도 하나(smoothstep)로 모든 요소를 보간하고
+  transform 만 움직입니다. 지원 브라우저에선 CSS `animation-timeline: scroll()` 이 JS 없이 구동하고,
+  아니면 rAF 1개가 CSS 변수만 갱신합니다. 원칙은 [`docs/design/GUIDE-scroll-motion.md`](docs/design/GUIDE-scroll-motion.md).
+- **모달** — 가운데 모달은 네 모서리가 같은 둥글기, 바텀시트는 위만 둥글게. 내용이 길어도
+  닫기 버튼이 화면 밖으로 밀리지 않게 본문만 스크롤합니다.
+- **당겨서 새로고침·스켈레톤·터치 여유(hit-slop)** — 여러 데이터 소스를 기다리는 화면은
+  모두 도착하기 전까지 '비어 있음'을 그리지 않습니다(빈 상태가 잠깐 떴다 사라지는 깜빡임 방지).
+- **동작 줄이기(reduced motion)** 를 켜면 애니메이션 대신 최종 상태로 바로 갑니다.
 
 ---
 
@@ -153,11 +199,15 @@ src/
 │   ├── kiosk/         학생용 등·하원 키오스크 (풀스크린)
 │   ├── special/       특강
 │   ├── finance/       재무 (PIN 게이트)
-│   ├── settings/      학년·반 편성, 감사 로그
+│   ├── settings/      학년·반 편성, 화면 톤, 감사 로그
+│   ├── stats/         월별 매출 추이
 │   └── dashboard/     요약
-├── components/        모달·UI
+├── components/        모달·UI (payments/PaymentsHeader 스크롤 모션, stats/ SVG 차트, paperMotion 공용 모션)
 ├── lib/
 │   ├── branding.ts    ⚙️ 학원 이름·연락처 (환경변수 진입점)
+│   ├── paperScheme.ts 화면 톤(밝게/어둡게/자동) 단일 컨트롤러
+│   ├── keyedLock.ts   같은 학생·같은 달 발송 직렬화
+│   ├── geminiModel.ts AI 모델 선택·폴백 체인
 │   ├── payssam.ts     결제 대행사 어댑터 — 다른 대행사로 바꾸려면 여기만
 │   ├── solapi.ts      문자·알림톡 어댑터
 │   ├── auth.ts        세션·PIN 토큰 (Node 런타임)
@@ -165,10 +215,13 @@ src/
 │   ├── date.ts        KST 날짜 유틸 (⚠️ 여기 규칙을 어기면 청구 월이 틀어진다)
 │   └── utils.ts       납부 상태 판정 로직
 ├── types/index.ts     도메인 타입 (테이블 구조와 대체로 1:1)
-└── __tests__/         단위 테스트 259개
+└── __tests__/         단위 테스트 975개
 supabase/
 ├── schema.sql         전체 스키마 (여기부터 시작)
+├── migrations/        기존 설치본용 증분 마이그레이션 (새로 설치하면 불필요)
 └── seed-demo.sql      데모 데이터 (연예인 이름 40명)
+tests/e2e/             Playwright 하네스 — 합성 데이터·격리 서버에서만 도는 화면·모션 실측
+docs/design/           설계 지침 (스크롤 모션)
 ```
 
 ---
@@ -196,6 +249,8 @@ npm install
    (여러 번 실행해도 안전하게 짜여 있습니다)
 3. 화면을 채워놓고 둘러보고 싶다면 `supabase/seed-demo.sql` 도 같은 방법으로 실행
    — 학년·반·학생 40명과 납부·청구 샘플이 들어갑니다. **운영 DB 에는 넣지 마세요.**
+4. **이미 예전 버전으로 운영 중이라면** `supabase/migrations/` 의 파일을 날짜 순서로 한 번씩 실행하세요
+   (`schema.sql` 을 다시 돌려도 됩니다 — 없는 컬럼만 추가하도록 짜여 있습니다).
 
 ### 3. 환경변수
 
@@ -233,7 +288,7 @@ npm run build && npm start
 ```bash
 npm run lint         # ESLint
 npm run typecheck    # tsc --noEmit
-npm test             # vitest (259개)
+npm test             # vitest (975개)
 ```
 
 이 세 개가 CI(`.github/workflows/ci.yml`)에서 도는 것과 같습니다.
@@ -424,6 +479,11 @@ no hard `DELETE`s anywhere (rows are soft-marked and kept), no silent fallbacks 
 money path (a missing payment-gateway URL throws rather than defaulting), sends are
 always human-triggered (auto-resend is deliberately off), and a tripwire test fails when
 new code gains the ability to message a human, forcing you to declare who it lands on.
+
+**UI**: an ivory "paper" theme with an optional navy-ink dark scheme (auto/light/dark, decided
+before first paint — no flash), contrast-checked in unit tests; scroll-linked header motion driven by
+CSS `animation-timeline: scroll()` with a single-rAF fallback and reduced-motion support; a monthly
+revenue page with hand-rolled SVG charts. See `docs/design/GUIDE-scroll-motion.md`.
 
 The UI and code comments are in Korean. The domain model (grades → classes → students,
 Korean school-year naming, elective subjects) assumes a Korean academy; adapting it to

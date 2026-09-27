@@ -43,8 +43,9 @@ export interface Student {
   parent_father_phone?: string  // 아버지 번호
   payssam_recipient?: 'mother' | 'father'      // 결제선생 청구서 수신자 (기본 mother)
   attendance_recipient?: 'mother' | 'father'   // 출결 알림톡 수신자 (기본 mother)
+  attendance_extra_phone?: string | null     // 출결 알림톡 추가 수신 번호 (선택)
   attendance_code?: string | null              // 출결 체크인 코드 (학생 번호 뒷4자리 자동)
-  school?: string | null                       // 학교명 — 원비가 기준 원본, 타앱은 여기서 참조 (2026-07-10)
+  school?: string | null                       // 학교명 — 이 앱이 기준 원본, 타앱은 여기서 참조 (2026-07-10)
   enrollment_date: string
   withdrawal_date?: string | null
   custom_fee?: number | null

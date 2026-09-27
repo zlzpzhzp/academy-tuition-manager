@@ -1,17 +1,18 @@
 'use client'
 
-// 학생 360 (원비 임베드판, 2026-08-20) — 원비 학생 한 명을 축으로 쌤(반·담당·진도)·질문·성적·상담을 모아 본다.
-// 원본: 쌤 src/components/Student360Cards.tsx. 쌤은 "자기 반 학생만" 보이지만 원비는 전체 명단(퇴원 포함)이라
-// 운영자님이 원비에서 바로 열 수 있게 해달라고 하신 게 계기(2026-08-19).
-// 쌤 판과의 차이:
-//   ① 스타일 — 쌤의 var(--bg-primary)/var(--accent) 토큰 대신 원비 토스다크 토큰(--bg-card/--border/--text-n/--blue).
+// 학생 360 (이 앱 임베드판, 2026-08-20) — 원비 학생 한 명을 축으로 강사 앱(반·담당·진도)·질문·성적·상담을 모아 본다.
+// 원본: 강사 앱 src/components/Student360Cards.tsx. 강사 앱은 "자기 반 학생만" 보이지만 이 앱은 전체 명단(퇴원 포함)이라
+// 운영자님이 이 앱에서 바로 열 수 있게 해달라고 하신 게 계기(2026-08-19).
+// 강사 앱 판과의 차이:
+//   ① 스타일 — 강사 앱의 var(--bg-primary)/var(--accent) 토큰 대신 이 앱 토스다크 토큰(--bg-card/--border/--text-n/--blue).
 //   ② 접힘 + 지연 로딩 — 모달이 무거워지지 않게 기본 접힘이고, 처음 펼칠 때만 fetch 한다(SWR key=null 로 보류).
 //   ③ 신원 카드 축소 — 이름·학교·연락처·등록일은 호스트(모달/상세페이지)에 이미 있어 중복 생략,
-//      원비에 없는 정보(담당쌤·쌤 반·수강 과목 전체)만 보여준다.
+//      이 앱에 없는 정보(담당 강사·강사 앱 반·수강 과목 전체)만 보여준다.
 // 표시 전용 — 이 컴포넌트는 어떤 write 도 하지 않는다(모든 데이터는 GET /api/students/[id]/360 한 방).
 import { useState } from 'react'
 import useSWR from 'swr'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
+import { motion } from '@/components/paperMotion'
 import {
   ChevronDown,
   ClipboardList,
@@ -55,13 +56,13 @@ export default function Student360Section({
         .sort((a, b) => subjectOrder(a) - subjectOrder(b))
         .join('·') || s.identity.dmClassName || '-'
     : '-'
-  // 쌤 자체 반(dm_classes)이 병기에 없는 별개 정보일 때만 보조로 남긴다
+  // 강사 앱 자체 반(dm_classes)이 병기에 없는 별개 정보일 때만 보조로 남긴다
   const dmClassExtra = s?.identity.dmClassName && !allClassLabel.includes(s.identity.dmClassName)
     ? s.identity.dmClassName
     : null
 
   return (
-    <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] overflow-hidden">
+    <div data-paper-card="" className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] overflow-hidden">
       <TButton
         onClick={() => setOpen(v => !v)}
         className="w-full flex items-center gap-2 px-4 py-3 text-left"
@@ -70,7 +71,7 @@ export default function Student360Section({
       >
         <User className="w-4 h-4 text-[var(--blue)] shrink-0" />
         <span className="font-bold text-sm">학생 360</span>
-        <span className="text-xs text-[var(--text-4)] truncate">쌤 · 질문 · 성적 · 상담 한눈에</span>
+        <span className="text-xs text-[var(--text-4)] truncate">강사 앱 · 질문 · 성적 · 상담 한눈에</span>
         <motion.span
           className="ml-auto shrink-0 text-[var(--text-4)]"
           animate={{ rotate: open ? 180 : 0 }}
@@ -101,7 +102,7 @@ export default function Student360Section({
 
               {!loading && s && (
                 <>
-                  {/* 1. 재적·수강 — 원비에 없는 정보(담당쌤·쌤 반·과목 전체)만 */}
+                  {/* 1. 재적·수강 — 이 앱에 없는 정보(담당 강사·강사 앱 반·과목 전체)만 */}
                   <Fold
                     icon={<User className="w-4 h-4 text-[var(--blue)]" />}
                     title="재적·수강"
@@ -109,15 +110,15 @@ export default function Student360Section({
                     note={s.identity.note}
                   >
                     <Row label="재적" value={`${s.identity.enrollmentStatus}${s.identity.withdrawalDate ? ` (${formatKstDate(s.identity.withdrawalDate)})` : ''}`} />
-                    {s.identity.teacherName && <Row label="담당(쌤)" value={s.identity.teacherName} />}
+                    {s.identity.teacherName && <Row label="담당(강사 앱)" value={s.identity.teacherName} />}
                     <Row label="반" value={allClassLabel} />
-                    {dmClassExtra && <Row label="반(쌤)" value={dmClassExtra} />}
+                    {dmClassExtra && <Row label="반(강사 앱)" value={dmClassExtra} />}
                     {s.identity.dmStatus && (
-                      <Row label="상태(쌤)" value={DM_STATUS_LABEL[s.identity.dmStatus] ?? s.identity.dmStatus} />
+                      <Row label="상태(강사 앱)" value={DM_STATUS_LABEL[s.identity.dmStatus] ?? s.identity.dmStatus} />
                     )}
                   </Fold>
 
-                  {/* 2. 수업·진도 (쌤) */}
+                  {/* 2. 수업·진도 (강사 앱) */}
                   <Fold
                     icon={<GraduationCap className="w-4 h-4 text-[var(--blue)]" />}
                     title="수업·진도"
@@ -129,7 +130,7 @@ export default function Student360Section({
                     {(allClassLabel !== '-' || s.classes.className) && (
                       <Row
                         label="반"
-                        // 병기 라벨이 정본. 요일(schedule)은 쌤 단일 반 것이라 1개 반일 때만 붙인다 — 2과목 학생에 오귀속 방지
+                        // 병기 라벨이 정본. 요일(schedule)은 강사 앱 단일 반 것이라 1개 반일 때만 붙인다 — 2과목 학생에 오귀속 방지
                         value={`${allClassLabel !== '-' ? allClassLabel : s.classes.className}${
                           s.classes.schedule && s.identity.enrollments.length <= 1 ? ` · ${s.classes.schedule}` : ''
                         }`}

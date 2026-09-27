@@ -152,7 +152,7 @@ export default function BillSendModal({ studentName, studentId, phone, amount, s
       onClose={() => { if (state !== 'sending') onClose() }}
       closeOnBackdrop={state !== 'sending'}
     >
-      <div className="bg-[var(--bg-card)] w-full rounded-2xl max-h-[90vh] overflow-y-auto">
+      <div data-paper-card="" className="bg-[var(--bg-card)] w-full rounded-2xl max-h-[90vh] overflow-y-auto">
         {/* 헤더 */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-[var(--bg-card)] z-10">
           <h2 className="text-lg font-bold tracking-tight flex items-center gap-2">
@@ -272,7 +272,7 @@ export default function BillSendModal({ studentName, studentId, phone, amount, s
               className="w-full px-3 py-2 bg-[var(--bg-elevated)] rounded-xl text-sm text-[var(--text-1)] placeholder:text-[var(--text-4)] focus:outline-none focus:ring-1 focus:ring-[var(--blue)] disabled:opacity-60"
             />
             {amountValue !== amount && (
-              <p className="text-[10px] text-[var(--orange)] mt-1">금액 수정분이 자동 기록됩니다</p>
+              <p className="text-[10px] text-[var(--scheduled-text)] mt-1">금액 수정분이 자동 기록됩니다</p>
             )}
           </div>
 
@@ -303,9 +303,9 @@ export default function BillSendModal({ studentName, studentId, phone, amount, s
           {/* 예약 (영업시간 외) */}
           {state === 'scheduled' && (
             <div className="flex items-start gap-2 p-4 bg-[var(--orange-dim)] rounded-xl">
-              <Check className="w-5 h-5 text-[var(--orange)] shrink-0 mt-0.5" />
+              <Check className="w-5 h-5 text-[var(--scheduled-text)] shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm font-bold text-[var(--orange)]">예약 발송 등록됨</p>
+                <p className="text-sm font-bold text-[var(--scheduled-text)]">예약 발송 등록됨</p>
                 <p className="text-xs text-[var(--text-3)] mt-1">
                   영업시간 외 요청이라 <strong>{scheduledKst} KST</strong>에 자동으로 발송됩니다.
                 </p>
@@ -319,8 +319,8 @@ export default function BillSendModal({ studentName, studentId, phone, amount, s
           {/* 확인 단계 경고 */}
           {state === 'confirming' && (
             <div className="flex items-start gap-2 p-3 bg-[var(--orange-dim)] rounded-xl">
-              <AlertTriangle className="w-4 h-4 text-[var(--orange)] shrink-0 mt-0.5" />
-              <p className="text-sm text-[var(--orange)]">
+              <AlertTriangle className="w-4 h-4 text-[var(--scheduled-text)] shrink-0 mt-0.5" />
+              <p className="text-sm text-[var(--scheduled-text)]">
                 <strong>{studentName}</strong>님에게 <strong>{formatWon(amountValue)}</strong> 청구서를 발송합니다. 확인하시겠습니까?
               </p>
             </div>
@@ -342,12 +342,12 @@ export default function BillSendModal({ studentName, studentId, phone, amount, s
                 disabled={!isPhoneValid || !isAmountValid || state === 'sending'}
                 className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2
                   ${state === 'confirming'
-                    ? 'bg-[var(--orange)] text-white hover:opacity-90'
+                    ? 'bg-[var(--orange)] text-[var(--on-action)] hover:opacity-90'
                     : state === 'sending'
-                      ? 'bg-[var(--blue)] text-white opacity-70 cursor-not-allowed'
+                      ? 'bg-[var(--blue)] text-[var(--on-action)] opacity-70 cursor-not-allowed'
                       : state === 'error'
-                        ? 'bg-[var(--blue)] text-white hover:opacity-90'
-                        : 'bg-[var(--blue)] text-white hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed'
+                        ? 'bg-[var(--blue)] text-[var(--on-action)] hover:opacity-90'
+                        : 'bg-[var(--blue)] text-[var(--on-action)] hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed'
                   }`}
               >
                 {state === 'sending' ? (

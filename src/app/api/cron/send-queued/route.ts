@@ -6,9 +6,12 @@ import { isBusinessHourKst } from '@/lib/schedule'
 import { writeAuditLog } from '@/lib/auditLog'
 import { requireCronSecret } from '@/lib/auth'
 import { isGuardExemptResettle } from '@/lib/resettleGuard'
+import { recoverStaleDestroys, finishDestroyQueue } from '@/lib/deferredDestroy'
 
-// Vercel Cron 전용. CRON_SECRET으로 보호.
-// 평일 11:00 KST (02:00 UTC) 실행 — 큐에 쌓인 예약 청구서를 일괄 발송.
+// CRON_SECRET(Bearer)으로 보호. 호출자 = 서버 root crontab `0 11 * * 1-6`(월~토 11:00 KST) →
+// 서버 crontab 의 호출 스크립트 → http://127.0.0.1:<PORT> (2026-07-31 Vercel 크론에서 이관).
+// ⛔ vercel.json 에 크론을 다시 넣지 마라 — 서버 크론과 이중 집행돼 청구가 두 번 나간다.
+// 큐에 쌓인 예약 청구서를 일괄 발송.
 // 영업시간 외에 실수로 호출되는 것 방지용 isBusinessHourKst 게이트도 함께 체크.
 export async function GET(request: NextRequest) {
   const unauthorized = requireCronSecret(request)
@@ -19,6 +22,7 @@ export async function GET(request: NextRequest) {
   }
 
   const now = new Date()
+  await recoverStaleDestroys(now)
 
   // 선점(processing) 후 프로세스가 크래시하면 row가 processing에 갇힌다. 발송 여부를 알 수 없어
   // 자동 재시도는 금지(중복발송 위험) — 대신 조용히 방치되지 않게 감사로그로 올린다. (2026-07-19)
@@ -30,6 +34,7 @@ export async function GET(request: NextRequest) {
     .lt('updated_at', staleCutoff)
     .limit(20)
   for (const st of stuck ?? []) {
+    if (st.send_type === 'destroy') continue
     await writeAuditLog('payment', null, 'update',
       `⚠️ 예약 발송이 처리중 상태로 멈춤: ${st.student_name ?? ''} ${st.billing_month} [${st.send_type}] — 결제선생에 실제 발송됐는지 수동 확인 필요(자동 재시도 안 함)`,
       { queueId: st.id, stuckSince: st.updated_at })
@@ -51,25 +56,48 @@ export async function GET(request: NextRequest) {
   const summary = { checked: 0, sent: 0, failed: 0, retrying: 0, skipped_duplicate: 0, skipped: 0 }
   // 분할 발송 후 기존 청구서 파기에 실패한 bill_id — 응답에도 올려 조용히 묻히지 않게. (2026-07-26 감사)
   const destroyFailedBillIds: string[] = []
+  const storageWarnings: string[] = []
+  const warnStorage = async (queueId: string, message: string) => {
+    storageWarnings.push(queueId)
+    await writeAuditLog('payment', null, 'update', `⚠️ 예약 청구서 발송됨 but ${message} — 자동 재시도 안 함, 수동확인 필요`, { queueId })
+  }
+  // 외부 성공은 이력 저장의 반환 오류·throw와 무관하다.
+  const recordKnownSent = async (values: Parameters<typeof recordSentBill>[0], studentName: string) => {
+    let failure: unknown
+    try {
+      const { error } = await recordSentBill(values)
+      failure = error
+    } catch (error) { failure = error }
+    if (failure) {
+      const message = failure && typeof failure === 'object' && 'message' in failure ? String(failure.message) : String(failure)
+      console.error('[PaySsam] DB 기록 실패 (청구서는 발송됨):', failure)
+      await writeAuditLog('payment', values.student_id, 'update',
+        `⚠️ 청구서 발송됨 but DB기록 실패: ${studentName ?? ''} ${values.billing_month} — 중복발송 가드 사각, 수동확인 필요`,
+        { billId: values.bill_id, error: message })
+    }
+  }
 
   // 2026-07-02: 실패가 조용히 영구 방치되던 문제 — 3회까지 재시도(다음 영업일 크론), 최종 실패는 감사로그.
   // ⚠️ 분할 부분성공은 재시도 금지(성공분 중복 발송 위험) — 호출부에서 finalFail로 직행.
   const MAX_RETRY = 3
-  const failOrRetry = async (row: { id: string; retry_count?: number | null; student_name?: string | null; send_type?: string | null }, msg: string, opts?: { noRetry?: boolean }) => {
+  const failOrRetry = async (row: { id: string; retry_count?: number | null; student_name?: string | null; send_type?: string | null; claimedAt: string }, msg: string, opts?: { noRetry?: boolean }) => {
     const retry = (row.retry_count ?? 0) + 1
     if (!opts?.noRetry && retry < MAX_RETRY) {
-      await supabase
-        .from('tuition_bill_queue')
-        // status를 pending으로 되돌려야 다음 영업일에 다시 집힌다. 선점(processing) 도입(2026-07-19) 후
-        // 이걸 빼면 row가 processing에 갇혀 재시도가 영구 중단된다.
-        .update({ status: 'pending', retry_count: retry, error_msg: `${msg} (${retry}회 실패, 다음 영업일 재시도)` })
-        .eq('id', row.id)
+      const values = { status: 'pending', retry_count: retry, error_msg: `${msg} (${retry}회 실패, 다음 영업일 재시도)` }
+      // processing에서 pending 복귀. destroy는 현재 선점 소유자만 재시도를 예약한다.
+      if (row.send_type === 'destroy') {
+        if (!await finishDestroyQueue(row.id, row.claimedAt, values)) return
+      } else {
+        await supabase.from('tuition_bill_queue').update(values).eq('id', row.id)
+      }
       summary.retrying++
     } else {
-      await supabase
-        .from('tuition_bill_queue')
-        .update({ status: 'failed', retry_count: retry, error_msg: `${msg} (${retry}회 최종 실패)`, sent_at: now.toISOString() })
-        .eq('id', row.id)
+      const values = { status: 'failed', retry_count: retry, error_msg: `${msg} (${retry}회 최종 실패)`, sent_at: now.toISOString() }
+      if (row.send_type === 'destroy') {
+        if (!await finishDestroyQueue(row.id, row.claimedAt, values)) return
+      } else {
+        await supabase.from('tuition_bill_queue').update(values).eq('id', row.id)
+      }
       await writeAuditLog('payment', null, 'update',
         `⚠️ 예약 발송 최종 실패: ${row.student_name ?? ''} [${row.send_type ?? ''}] ${msg} — 수동 처리 필요`,
         { queueId: row.id, error: msg })
@@ -77,7 +105,25 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  for (const row of pending ?? []) {
+  for (const pendingRow of pending ?? []) {
+    const row = { ...pendingRow, claimedAt: new Date().toISOString() }
+    let allSent = false
+    let anySent = false
+    let sentStoreAttempted = false
+    const finishKnownSent = async (values: Record<string, unknown> = {}) => {
+      sentStoreAttempted = true
+      try {
+        const { data, error } = await supabase.from('tuition_bill_queue')
+          .update({ status: 'sent', sent_at: now.toISOString(), ...values })
+          .eq('id', row.id).eq('status', 'processing').eq('updated_at', row.claimedAt).select('id')
+        if (error) throw error
+        if (!data?.length) throw new Error('선점 상태 변경으로 sent 저장 안 됨')
+        summary.sent++
+      } catch (error) {
+        console.error('[cron/send-queued] sent 저장 실패:', row.id, error)
+        await warnStorage(row.id, '큐 sent 저장 실패')
+      }
+    }
     summary.checked++
     try {
       // 원자적 선점 (2026-07-19 코드검수 P1): 읽고→외부발송→나중에 status 기록 구조라,
@@ -86,7 +132,7 @@ export async function GET(request: NextRequest) {
       // 조건부 UPDATE(=락)로 pending일 때만 processing으로 전이 — 못 잡으면 다른 실행이 처리 중이므로 skip.
       const { data: claimed } = await supabase
         .from('tuition_bill_queue')
-        .update({ status: 'processing', updated_at: now.toISOString() })
+        .update({ status: 'processing', updated_at: row.claimedAt })
         .eq('id', row.id)
         .eq('status', 'pending')
         .select('id')
@@ -109,7 +155,12 @@ export async function GET(request: NextRequest) {
 
       // 2026-07-02 정합성 전수검사: 예약 후 발송 전에 현장 수납(수동 납부)된 학생에게
       // 청구서가 그대로 나가 이중청구되던 구멍 — 활성 납부 기록 있으면 발송 취소 (destroy는 예외: 파기는 항상 안전)
-      if (row.send_type !== 'destroy' && !isResettle) {
+      // 🔴 billType 스코핑(2026-09-01): 이 가드는 send API와 동일하게 **정규 청구에만** 적용해야 한다.
+      //   납부 기록은 정규분(스냅샷 요금)이라, electives 예약분까지 막으면 "정규를 먼저 낸 학생"의
+      //   선택과목 청구가 자동취소된다 — 9/1 11:00 이효리 기하 15만이 정규 45만 납부를 사유로
+      //   취소된 실사고. 별도 electives 청구는 정규 납부와 무관하게 발송 가능해야 한다.
+      const guardBillType = row.bill_type === 'electives' ? 'electives' : 'regular'
+      if (row.send_type !== 'destroy' && !isResettle && row.is_regular_tuition !== false && guardBillType === 'regular') {
         // limit(1) + 배열 확인: 분할납부 등으로 같은 달 결제 row가 2건 이상이면
         // maybeSingle()이 error+data=null 로 이중청구 방지 가드를 fail-open 시키던 버그 방어.
         const { data: paidRows, error: paidErr } = await supabase
@@ -172,18 +223,26 @@ export async function GET(request: NextRequest) {
       if (row.send_type === 'single') {
         // supersedesBillId: 퇴원 정산 예약분 — 이 청구서 결제완료 시 콜백이 기존 완납분을 환불하도록 링크.
         const { amount, productName, message, supersedesBillId } = row.payload as { amount: number; productName: string; message: string; supersedesBillId?: string }
-        const result = await sendBill({
-          studentName: row.student_name,
-          phone: row.phone,
-          amount,
-          productName,
-          message,
-        })
+        let result: Awaited<ReturnType<typeof sendBill>>
+        try {
+          result = await sendBill({
+            studentName: row.student_name,
+            phone: row.phone,
+            amount,
+            productName,
+            message,
+          })
+        } catch (error) {
+          await failOrRetry(row, `발송 결과 불명확 — 결제선생에서 실발송 여부 확인 후 수동 처리 (${error instanceof Error ? error.message : String(error)})`, { noRetry: true })
+          continue
+        }
 
         if (result.code === '0000') {
           const billId = result.bill_id as string
           const shortUrl = (result as { shortURL?: string }).shortURL ?? null
-          await recordSentBill({
+          allSent = anySent = true
+          await finishKnownSent({ bill_id: billId })
+          await recordKnownSent({
             student_id: row.student_id,
             bill_id: billId,
             amount,
@@ -195,31 +254,34 @@ export async function GET(request: NextRequest) {
             bill_type: row.bill_type === 'electives' ? 'electives' : 'regular',
             bill_note: row.bill_note,
             ...(supersedesBillId ? { supersedes_bill_id: supersedesBillId } : {}),
-          })
-          await supabase
-            .from('tuition_bill_queue')
-            .update({ status: 'sent', bill_id: billId, sent_at: now.toISOString() })
-            .eq('id', row.id)
+          }, row.student_name)
           // 퇴원 정산 예약분이 실제 발송됨 → '정산 예약됨' → '정산 처리중(결제대기)'로 승격 (2026-07-18)
           if (supersedesBillId) {
-            await supabase.from('tuition_withdrawal_status').upsert(
+            const { error: withdrawalError } = await supabase.from('tuition_withdrawal_status').upsert(
               { student_id: row.student_id, billing_month: row.billing_month, status: 'resettle_pending', updated_at: now.toISOString() },
               { onConflict: 'student_id,billing_month' },
             )
+            if (withdrawalError) throw withdrawalError
           }
-          summary.sent++
         } else {
           await failOrRetry(row, result.msg || '발송 실패')
         }
       } else if (row.send_type === 'reissue') {
-        const { amount, productName, message, oldBillId } = row.payload as { amount: number; productName: string; message: string; oldBillId: string }
+        const { amount, productName, message, oldBillId, supersedesBillId: payloadSupersedes } = row.payload as { amount: number; productName: string; message: string; oldBillId: string; supersedesBillId?: string }
 
         // 기존 청구서 아직 sent면 파기
-        const { data: oldBill } = await supabase
+        const { data: oldBill, error: oldBillErr } = await supabase
           .from('tuition_bill_history')
-          .select('status')
+          .select('status, bill_note, bill_type, supersedes_bill_id')
           .eq('bill_id', oldBillId)
           .single()
+        // 조회 장애를 '기존 청구서 없음'으로 읽으면 파기 없이 새 청구서가 나가 두 장이 동시에 산다(이중청구).
+        // row 없음(PGRST116)만 기존대로 통과, 그 외 오류는 보류·재시도. (2026-09-05 astra 병합 검수)
+        if (oldBillErr && oldBillErr.code !== 'PGRST116') {
+          await failOrRetry(row, `기존 청구서 조회 실패(${oldBillErr.message}) — 이중청구 방지로 재발송 보류`)
+          continue
+        }
+        const supersedesBillId = oldBill?.supersedes_bill_id ?? payloadSupersedes ?? null
 
         if (oldBill?.status === 'sent') {
           // 파기 실패해도 새 청구서를 강행 발송하던 구멍 — 두 장이 동시에 살아 학부모가 둘 다 결제(이중청구).
@@ -231,8 +293,10 @@ export async function GET(request: NextRequest) {
             if (destroyResult.code === '0000') {
               await supabase
                 .from('tuition_bill_history')
-                .update({ status: 'destroyed', bill_note: '수동 재발송 (예약)으로 파기', updated_at: now.toISOString() })
+                .update({ status: 'destroyed', updated_at: now.toISOString() })
                 .eq('bill_id', oldBillId)
+              await writeAuditLog('payment', row.student_id, 'update',
+                '수동 재발송 (예약)으로 파기', { billId: oldBillId })
             } else {
               destroyFailMsg = destroyResult.msg || '알 수 없음'
             }
@@ -245,17 +309,25 @@ export async function GET(request: NextRequest) {
           }
         }
 
-        const sendResult = await sendBill({
-          studentName: row.student_name,
-          phone: row.phone,
-          amount,
-          productName,
-          message,
-        })
+        let sendResult: Awaited<ReturnType<typeof sendBill>>
+        try {
+          sendResult = await sendBill({
+            studentName: row.student_name,
+            phone: row.phone,
+            amount,
+            productName,
+            message,
+          })
+        } catch (error) {
+          await failOrRetry(row, `발송 결과 불명확 — 결제선생에서 실발송 여부 확인 후 수동 처리 (${error instanceof Error ? error.message : String(error)})`, { noRetry: true })
+          continue
+        }
         if (sendResult.code === '0000') {
           const newBillId = sendResult.bill_id as string
           const shortUrl = (sendResult as { shortURL?: string }).shortURL ?? null
-          await recordSentBill({
+          allSent = anySent = true
+          await finishKnownSent({ bill_id: newBillId })
+          await recordKnownSent({
             student_id: row.student_id,
             bill_id: newBillId,
             amount,
@@ -264,31 +336,31 @@ export async function GET(request: NextRequest) {
             short_url: shortUrl,
             sent_at: now.toISOString(),
             is_regular_tuition: row.is_regular_tuition,
-            bill_note: '수동 재발송 (예약)',
-          })
-          await supabase
-            .from('tuition_bill_queue')
-            .update({ status: 'sent', bill_id: newBillId, sent_at: now.toISOString() })
-            .eq('id', row.id)
-          summary.sent++
+            bill_note: oldBill ? oldBill.bill_note : row.bill_note,
+            bill_type: oldBill ? oldBill.bill_type : row.bill_type,
+            ...(supersedesBillId ? { supersedes_bill_id: supersedesBillId } : {}),
+          }, row.student_name)
+          await writeAuditLog('payment', row.student_id, 'update',
+            '수동 재발송 (예약)', { oldBillId, billId: newBillId })
         } else {
           await failOrRetry(row, sendResult.msg || '재발송 실패')
         }
       } else if (row.send_type === 'destroy') {
         const { billId, amount, methodLabel } = row.payload as { billId: string; amount: number; methodLabel?: string }
 
-        const { data: bill } = await supabase
+        const { data: bill, error: billErr } = await supabase
           .from('tuition_bill_history')
           .select('status')
           .eq('bill_id', billId)
           .single()
 
+        if (billErr && billErr.code !== 'PGRST116') {
+          await failOrRetry(row, `청구서 조회 실패(${billErr.message})`)
+          continue
+        }
+
         if (!bill || bill.status !== 'sent') {
-          await supabase
-            .from('tuition_bill_queue')
-            .update({ status: 'cancelled', error_msg: '대상 청구서 상태 변동', sent_at: now.toISOString() })
-            .eq('id', row.id)
-          summary.skipped_duplicate++
+          if (await finishDestroyQueue(row.id, row.claimedAt, { status: 'cancelled', error_msg: '대상 청구서 상태 변동', sent_at: now.toISOString() })) summary.skipped_duplicate++
           continue
         }
 
@@ -302,22 +374,23 @@ export async function GET(request: NextRequest) {
               updated_at: now.toISOString(),
             })
             .eq('bill_id', billId)
-          await supabase
-            .from('tuition_bill_queue')
-            .update({ status: 'sent', bill_id: billId, sent_at: now.toISOString() })
-            .eq('id', row.id)
-          summary.sent++
+          if (await finishDestroyQueue(row.id, row.claimedAt, { status: 'sent', bill_id: billId, sent_at: now.toISOString() })) summary.sent++
         } else {
           await failOrRetry(row, result.msg || '파기 실패')
         }
       } else if (row.send_type === 'resend') {
         const { billId } = row.payload as { billId: string }
 
-        const { data: bill } = await supabase
+        const { data: bill, error: billErr } = await supabase
           .from('tuition_bill_history')
           .select('status, resend_count')
           .eq('bill_id', billId)
           .single()
+
+        if (billErr && billErr.code !== 'PGRST116') {
+          await failOrRetry(row, `청구서 조회 실패(${billErr.message})`)
+          continue
+        }
 
         if (!bill || bill.status !== 'sent') {
           await supabase
@@ -330,7 +403,13 @@ export async function GET(request: NextRequest) {
 
         const result = await resendBill(billId)
         if (result.code === '0000') {
-          await bumpResendCount(billId, bill.resend_count, now.toISOString())
+          const { error: dbError } = await bumpResendCount(billId, bill.resend_count, now.toISOString())
+          if (dbError) {
+            console.error('[PaySsam] DB 기록 실패 (청구서는 발송됨):', dbError)
+            await writeAuditLog('payment', row.student_id, 'update',
+              `⚠️ 청구서 발송됨 but DB기록 실패: ${row.student_name ?? ''} ${row.billing_month} — 중복발송 가드 사각, 수동확인 필요`,
+              { billId, error: dbError.message })
+          }
           await supabase
             .from('tuition_bill_queue')
             .update({ status: 'sent', bill_id: billId, sent_at: now.toISOString() })
@@ -347,7 +426,7 @@ export async function GET(request: NextRequest) {
         // 학생이 낼 청구서 유실. 대화형 split-send와 동일 순서로 정정, 2026-07-03 버그수정)
         const { data: existing, error: existingErr } = await supabase
           .from('tuition_bill_history')
-          .select('bill_id, amount, is_regular_tuition')
+          .select('bill_id, amount, is_regular_tuition, bill_type')
           .eq('student_id', row.student_id)
           .eq('billing_month', row.billing_month)
           .eq('status', 'sent')
@@ -365,18 +444,21 @@ export async function GET(request: NextRequest) {
           continue
         }
 
-        const activeRegular = (existing ?? []).filter(b => b.is_regular_tuition !== false)
+        const activeRegular = (existing ?? []).filter(b => b.is_regular_tuition !== false && (b.bill_type ?? 'regular') === 'regular')
 
         const successResults: { bill_id: string; amount: number }[] = []
         const failResults: { amount: number; error: string }[] = []
 
+        let sendResultUnknown = false
         for (let i = 0; i < parts; i++) {
           const amount = amounts[i]
           const label = `분할 ${i + 1}/${parts}`
           const [y, m] = row.billing_month.split('-')
           const productName = `${y}년 ${parseInt(m)}월 수업료 (${label})`
           const message = `${row.student_name} ${productName}`
+          let awaitingSend = false
           try {
+            awaitingSend = true
             const result = await sendBill({
               studentName: row.student_name,
               phone: row.phone,
@@ -384,10 +466,13 @@ export async function GET(request: NextRequest) {
               productName,
               message,
             })
+            awaitingSend = false
             if (result.code === '0000') {
               const billId = result.bill_id as string
               const shortUrl = (result as { shortURL?: string }).shortURL ?? null
-              await recordSentBill({
+              successResults.push({ bill_id: billId, amount })
+              anySent = true
+              await recordKnownSent({
                 student_id: row.student_id,
                 bill_id: billId,
                 amount,
@@ -397,19 +482,20 @@ export async function GET(request: NextRequest) {
                 sent_at: now.toISOString(),
                 is_regular_tuition: true,
                 bill_note: label,
-              })
-              successResults.push({ bill_id: billId, amount })
+              }, row.student_name)
             } else {
               failResults.push({ amount, error: result.msg || '발송 실패' })
             }
           } catch (e) {
             console.error('[cron/send-queued] split send error:', e)
+            if (awaitingSend) sendResultUnknown = true
             failResults.push({ amount, error: '네트워크 오류' })
           }
         }
 
         // 분할 전건 성공 후에만 기존 청구서 파기(실패시 원본 보존 = 학생 청구서 유실 방지).
         // 대화형 split-send와 동일 순서 (2026-07-03 순서버그 수정: 기존엔 발송 전 무조건 파기했음)
+        allSent = successResults.length === parts
         const rowDestroyFailed: string[] = []
         if (successResults.length === parts) {
           for (const bill of activeRegular) {
@@ -441,40 +527,44 @@ export async function GET(request: NextRequest) {
         }
 
         if (persist && successResults.length === parts) {
-          await supabase
+          const { error: persistError } = await supabase
             .from('tuition_students')
             .update({
               split_billing_parts: parts,
               split_billing_amounts: amounts,
             })
             .eq('id', row.student_id)
+          if (persistError) throw persistError
         }
 
         if (failResults.length === 0) {
-          await supabase
-            .from('tuition_bill_queue')
-            .update({
-              status: 'sent',
-              sent_at: now.toISOString(),
-              // 발송은 성공했으니 status는 sent. 다만 파기 실패는 큐 행에도 남겨 추적 가능하게. (2026-07-26 감사)
-              ...(rowDestroyFailed.length > 0 ? { error_msg: `분할 발송 성공 but 기존 청구서 파기 실패: ${rowDestroyFailed.join(', ')} — 수동 파기 필요` } : {}),
-            })
-            .eq('id', row.id)
-          summary.sent++
+          await finishKnownSent({
+            // 발송은 성공했으니 sent. 파기 실패는 기존대로 큐와 응답에도 남긴다.
+            ...(rowDestroyFailed.length > 0 ? { error_msg: `분할 발송 성공 but 기존 청구서 파기 실패: ${rowDestroyFailed.join(', ')} — 수동 파기 필요` } : {}),
+          })
         } else {
           // 부분성공 재시도 금지(성공분 중복 발송 위험) — 전건 실패만 재시도
-          await failOrRetry(row, `${successResults.length}/${parts}건 성공, ${failResults.length}건 실패`, { noRetry: successResults.length > 0 })
+          const msg = `${successResults.length}/${parts}건 성공, ${failResults.length}건 실패`
+            + (sendResultUnknown ? ' — 발송 결과 불명확 — 결제선생에서 실발송 여부 확인 후 수동 처리' : '')
+          await failOrRetry(row, msg, { noRetry: sendResultUnknown || successResults.length > 0 })
         }
       }
     } catch (e) {
       console.error('[cron/send-queued] row error:', row.id, e)
-      await failOrRetry(row, (e as Error).message)
+      if (allSent) {
+        // 알려진 전건 성공 뒤 후처리 예외가 발송 재시도로 이어지면 안 된다.
+        if (!sentStoreAttempted) await finishKnownSent()
+        await warnStorage(row.id, '후처리 저장 실패')
+      } else {
+        await failOrRetry(row, (e as Error).message, { noRetry: anySent })
+      }
     }
   }
 
   return NextResponse.json({
     ok: true,
     ...summary,
+    ...(storageWarnings.length > 0 ? { storageWarnings: [...new Set(storageWarnings)] } : {}),
     ...(destroyFailedBillIds.length > 0 ? { destroyFailed: destroyFailedBillIds } : {}),
     at: now.toISOString(),
   })

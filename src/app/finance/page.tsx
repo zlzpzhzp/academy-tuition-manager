@@ -300,7 +300,7 @@ export default function FinancePage() {
                 <div>
                   <span className="text-sm font-semibold">{teacher.name}</span>
                   <span className="text-xs text-[var(--text-4)] ml-1.5">({teacher.pay_ratio ?? 40}%)</span>
-                  {bonus > 0 && <span className="text-xs text-emerald-600 ml-1.5">+보너스 {formatNumber(bonus)}</span>}
+                  {bonus > 0 && <span className="text-xs text-[var(--green)] ml-1.5">+보너스 {formatNumber(bonus)}</span>}
                 </div>
                 <div className="text-right">
                   <p className="text-sm font-semibold tabular-nums">{formatWon(net)}</p>

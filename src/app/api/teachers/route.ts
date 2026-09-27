@@ -53,5 +53,5 @@ export async function POST(request: Request) {
     `선생님 등록: ${body.name}${body.subject ? ` (${body.subject})` : ''}`,
     { name: body.name, phone: body.phone, subject: body.subject })
 
-  return NextResponse.json(data)
+  return NextResponse.json(hasFinanceSession(request) ? data : stripFinanceFields(data))
 }

@@ -57,17 +57,36 @@ interface PaySsamResponse {
 }
 
 async function callApi(uri: string, body: Record<string, unknown>): Promise<PaySsamResponse> {
-  const res = await fetch(`${BASE_URL()}${uri}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', charset: 'UTF-8' },
-    body: JSON.stringify(body),
-  })
-  // 게이트웨이 에러(HTML 502 등)를 res.json() 파싱 실패로 죽이지 않고 코드/본문을 남긴다 (2026-07-10 전수점검 L1)
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`PaySsam API HTTP ${res.status} ${uri}: ${text.slice(0, 200)}`)
+  // env 오염(NaN·0·음수)이면 기본값 — 여기서 동기 TypeError 가 나면 호출처가 '발송 결과 불명확' 으로 오분류해 전 발송이 failed 로 확정된다(9/7 코드 검수)
+  const envTimeout = Number(process.env.PAYSSAM_TIMEOUT_MS)
+  const timeoutMs = Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : 30_000
+  const signal = AbortSignal.timeout(timeoutMs)
+  let httpError = false
+  let readingBody = false
+  try {
+    const res = await fetch(`${BASE_URL()}${uri}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', charset: 'UTF-8' },
+      body: JSON.stringify(body),
+      signal,
+    })
+    // 게이트웨이 에러(HTML 502 등)를 res.json() 파싱 실패로 죽이지 않고 코드/본문을 남긴다 (2026-07-10 전수점검 L1)
+    if (!res.ok) {
+      httpError = true
+      const text = await res.text().catch(() => '')
+      throw new Error(`PaySsam API HTTP ${res.status} ${uri}: ${text.slice(0, 200)}`)
+    }
+    readingBody = true
+    return await res.json()
+  } catch (error) {
+    // fetch 자체는 이 신호의 reason으로 거절된다. 응답 본문 소비의 AbortError만
+    // 별도 DOMException일 수 있다. 다른 출처의 동명 오류는 뒤늦은 만료로 덮지 않는다.
+    if (!httpError && signal.aborted && (error === signal.reason ||
+      (readingBody && error instanceof DOMException && error.name === 'AbortError'))) {
+      throw new Error(`PaySsam API timeout ${timeoutMs}ms ${uri}`)
+    }
+    throw error
   }
-  return res.json()
 }
 
 // 테스트 모드 확인용

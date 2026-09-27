@@ -57,8 +57,8 @@ export default function FinanceAuthPage() {
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
       <div className="card-elevated p-8 w-full max-w-xs text-center">
-        <div className="w-14 h-14 bg-gradient-to-br from-[#3182f6] to-[#1b64da] rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-[#3182f6]/20">
-          <Lock className="w-6 h-6 text-white" />
+        <div className="w-14 h-14 bg-gradient-to-br from-[var(--blue)] to-[var(--blue-hover)] rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-[var(--paper-shadow-sm)]">
+          <Lock className="w-6 h-6 text-[var(--on-action)]" />
         </div>
         <h1 className="text-lg font-bold mb-1">원장 전용</h1>
         <p className="text-sm text-[var(--text-4)] mb-6">PIN 번호를 입력하세요</p>
@@ -83,7 +83,7 @@ export default function FinanceAuthPage() {
         <TButton
           onClick={handlePinSubmit}
           disabled={verifying || pin.length !== 6}
-          className="mt-4 w-full py-3 rounded-xl bg-[var(--blue)] text-white font-bold disabled:opacity-50"
+          className="mt-4 w-full py-3 rounded-xl bg-[var(--blue)] text-[var(--on-action)] font-bold disabled:opacity-50"
         >
           {verifying ? '확인 중...' : '확인'}
         </TButton>

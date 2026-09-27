@@ -9,6 +9,8 @@ import type { Student, GradeWithClasses, PaymentMethod } from '@/types'
 import { useGrades, swrFetcher, getCurrentMonth, isBatchExcluded as isBatchExcludedForMonth } from '@/lib/utils'
 import { billingPhone } from '@/lib/student-codes'
 import { isSendSuccess, sendFailReason } from '@/lib/payssamJudge'
+import { isSpecialTarget } from '@/lib/specialRoster'
+import { applyDefaultExpansion } from '@/lib/defaultExpansion'
 import { formatWon, formatClassName } from '@/lib/format'
 import { METHOD_LABELS } from '@/lib/constants'
 import { compressImageToBlob } from '@/lib/compressImage'
@@ -33,18 +35,8 @@ function isBatchExcluded(s: { batch_exclude_month?: string | null }): boolean {
 
 const SPECIAL_LABEL = '여름방학 특강'
 const SPECIAL_MONTH = '2026-07' // 특강 청구 billing_month (정규와 bill_note로 구분)
-const SPECIAL_START = '2026-07-23' // 특강 시작일 — 이 이전 퇴원생은 특강 대상 아님
 // 반기반 여름특강 청구서 안내문구 (학부모용 message) — 운영자 지시 2026-07-15. bill_note(내부 매칭키)와 별개.
 const SPECIAL_MESSAGE = '7/23 ~ 8/13 3주간 진행되는 여름특강비 입니다.\n정규원비와는 별개로 1회 결제해주시면 됩니다.\n감사합니다!'
-
-// 특강 대상 학생 필터 (2026-07-09 사용자 지시: 퇴원생 반영 버그 수정).
-// getActiveStudents('2026-07')은 7월 중 퇴원생도 포함해 특강탭에 남던 버그 →
-// 특강 시작(7/23) 이후에도 재원인 학생만. 반별·명단그룹 통일.
-// 경계: 퇴원일 '당일'은 미수강으로 본다 — calcRefund/getLastClassDate와 같은 규칙.
-// >= 였을 때 퇴원일이 특강 첫날(7/23)과 같은 학생이 대상으로 남아 특강비가 청구됐다.
-// (2026-07-22 마동석 — 7/23 퇴원인데 7/23 개강 특강 30만이 청구돼 있었음)
-const isSpecialActive = (s: { withdrawal_date?: string | null }): boolean =>
-  !s.withdrawal_date || s.withdrawal_date > SPECIAL_START
 
 interface SpecialRow {
   class_id: string
@@ -80,6 +72,7 @@ interface SpecialGroupStudent {
   parent_father_phone: string | null
   payssam_recipient: string
   withdrawal_date: string | null
+  enrollment_date?: string | null
   batch_exclude_month?: string | null
 }
 interface SpecialGroup {
@@ -187,6 +180,25 @@ export default function SpecialPage() {
     return m
   }, [data])
 
+  // 대상 명단은 반/그룹마다 한 번 계산해 렌더·집계·일괄청구가 같은 집합을 쓴다.
+  const classRosters = useMemo(() => {
+    const m = new Map<string, Student[]>()
+    for (const grade of grades) {
+      for (const cls of grade.classes ?? []) {
+        const sp = specialByClass.get(cls.id)
+        m.set(cls.id, (cls.students ?? []).filter(s => isSpecialTarget(s, sp?.period_start)))
+      }
+    }
+    return m
+  }, [grades, specialByClass])
+  const groupRosters = useMemo(() => {
+    const m = new Map<string, SpecialGroupStudent[]>()
+    for (const group of data?.groups ?? []) {
+      m.set(group.id, group.students.filter(s => isSpecialTarget(s, group.period_start)))
+    }
+    return m
+  }, [data])
+
   // student_id → 최신 '활성' 특강 청구 (bills는 sent_at desc 정렬).
   // 파기·취소분까지 매핑하면 그 학생이 미청구 집계·일괄청구 대상에서 조용히 빠진다 —
   // 파기했으면 다시 청구할 수 있어야 한다 (2026-08-13 라인리뷰)
@@ -236,13 +248,13 @@ export default function SpecialPage() {
     for (const grade of grades) {
       for (const cls of (grade.classes ?? [])) {
         if (!specialByClass.has(cls.id)) continue
-        const students = ((cls.students ?? []) as { id: string; withdrawal_date?: string | null }[]).filter(isSpecialActive)
+        const students = classRosters.get(cls.id) ?? []
         const paid = students.filter(s => !!payByStudent.get(s.id) || billByStudent.get(s.id)?.status === 'paid').length
         m.set(cls.id, { paid, total: students.length, fullyPaid: students.length > 0 && paid === students.length })
       }
     }
     for (const g of data?.groups ?? []) {
-      const students = g.students.filter(isSpecialActive)
+      const students = groupRosters.get(g.id) ?? []
       const paid = students.filter(s => {
         const k = `${s.id}|${g.bill_note}`
         return !!groupPayByStudent.get(k) || groupBillByStudent.get(k)?.status === 'paid'
@@ -250,7 +262,7 @@ export default function SpecialPage() {
       m.set(g.id, { paid, total: students.length, fullyPaid: students.length > 0 && paid === students.length })
     }
     return m
-  }, [grades, data, specialByClass, billByStudent, payByStudent, groupBillByStudent, groupPayByStudent])
+  }, [grades, data, specialByClass, classRosters, groupRosters, billByStudent, payByStudent, groupBillByStudent, groupPayByStudent])
 
   // 기본 상태: 미납 남은 곳은 펼치고, 전원납부한 곳은 접는다
   useEffect(() => {
@@ -266,6 +278,16 @@ export default function SpecialPage() {
       return next
     })
   }, [sectionStats])
+
+  // 2026-09-26 C05 — 명단이 **처음 나타나는 렌더**에 기본 펼침이 이미 들어가 있게 한다.
+  // 위 effect 는 페인트 **후**에 돌아서 첫 화면이 전부 접힘으로 그려졌다가 펼침으로 점프했다(깜빡임·큰 레이아웃
+  // 이동). 로딩이 끝난 첫 렌더에서 한 번만 렌더 도중 상태를 맞춘다(React '렌더 중 상태 조정' → 커밋 전 재렌더).
+  // 이후 데이터 변화의 재적용은 위 effect 그대로. 한 번만 도는 플래그라 렌더 루프가 생기지 않는다.
+  const [firstRevealApplied, setFirstRevealApplied] = useState(false)
+  if (!loading && !firstRevealApplied && sectionStats.size > 0) {
+    setFirstRevealApplied(true)
+    setExpandedSections(prev => applyDefaultExpansion(prev, [...sectionStats].map(([key, stat]) => [key, stat.fullyPaid] as const)))
+  }
 
   const [groupMethodPickerFor, setGroupMethodPickerFor] = useState<{ student: SpecialGroupStudent; group: SpecialGroup } | null>(null)
   // 발송된 특강 청구서 액션(파기/취소/재발송) — 납부탭 BillActionModal 재사용
@@ -435,7 +457,7 @@ export default function SpecialPage() {
 
   const handleGroupBatch = useCallback(async (group: SpecialGroup) => {
     if (batch || billing) return
-    const students = group.students.filter(isSpecialActive)
+    const students = groupRosters.get(group.id) ?? []
     // 직접납부 완료자 제외 — 헤더 카운트(groupPayByStudent 반영)와 동일 기준, 이중청구 방지 (2026-07-10)
     const unbilled = students.filter(s =>
       !groupBillByStudent.get(`${s.id}|${group.bill_note}`) && !groupPayByStudent.get(`${s.id}|${group.bill_note}`)
@@ -478,7 +500,7 @@ export default function SpecialPage() {
     else toast.success(`${group.name}: ${ok}/${targets.length}명 청구서 발송 완료`)
     await mutate()
     setBatch(null)
-  }, [batch, billing, groupBillByStudent, groupPayByStudent, mutate])
+  }, [batch, billing, groupRosters, groupBillByStudent, groupPayByStudent, mutate])
 
   const handleGroupDirectPay = useCallback(async (student: SpecialGroupStudent, group: SpecialGroup, method: PaymentMethod) => {
     const label = METHOD_LABELS[method] ?? method
@@ -501,7 +523,7 @@ export default function SpecialPage() {
     <div className="pt-4 pb-24">
       {/* 헤더 */}
       <div className="flex items-center gap-2 mb-1">
-        <Flame className="w-5 h-5 text-[var(--orange)]" />
+        <Flame className="w-5 h-5 text-[var(--scheduled-text)]" />
         <h1 className="text-lg font-bold text-[var(--text-1)]">여름방학 특강</h1>
       </div>
       {period && <p className="text-[12px] text-[var(--text-4)] mb-4">특강기간 {period} · 결제일 7/23</p>}
@@ -516,11 +538,11 @@ export default function SpecialPage() {
           <div className="space-y-3">
             {(grade.classes ?? []).map(cls => {
               const sp = specialByClass.get(cls.id)
-              const students = (cls.students ?? []).filter(isSpecialActive)
+              const students = classRosters.get(cls.id) ?? []
               const stat = sectionStats.get(cls.id)
               const isExpanded = !sp || expandedSections.has(cls.id)
               return (
-                <div key={cls.id} className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+                <div data-paper-card="" key={cls.id} className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
                   <div
                     className={`flex items-start justify-between gap-2 px-4 py-2.5 bg-[var(--bg-card-hover)]/50 ${isExpanded ? 'border-b border-[var(--border)]' : ''} ${sp ? 'cursor-pointer active:bg-[var(--bg-elevated)] select-none' : ''}`}
                     onClick={sp ? () => toggleSection(cls.id) : undefined}
@@ -557,7 +579,7 @@ export default function SpecialPage() {
                               type="button"
                               onClick={(e) => { e.stopPropagation(); handleBatch(`${grade.name}${cls.name}`, sp, students, `${grade.name} ${formatClassName(cls)}`) }}
                               disabled={!!batch || !!billing}
-                              className="flex items-center gap-0.5 text-[11px] font-bold text-white bg-[var(--blue)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all disabled:opacity-50 whitespace-nowrap"
+                              className="flex items-center gap-0.5 text-[11px] font-bold text-[var(--on-action)] bg-[var(--blue)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all disabled:opacity-50 whitespace-nowrap"
                             >
                               {isBatching && batch
                                 ? <><Loader2 className="w-3 h-3 animate-spin" />{batch.done}/{batch.total}</>
@@ -591,7 +613,7 @@ export default function SpecialPage() {
                                   그 사유(예: 그 학생만 다른 금액)는 이 화면 어디에도 안 보인다.
                                   2026-08-05 정국: 반 정가 100,000 인데 5만으로 정해진 건이었다. */}
                               {isBatchExcluded(student) && (
-                                <span className="text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--orange)] font-bold whitespace-nowrap">
+                                <span className="text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--scheduled-text)] font-bold whitespace-nowrap">
                                   청구 제외 · 메모 확인
                                 </span>
                               )}
@@ -621,7 +643,7 @@ export default function SpecialPage() {
                                 <TButton
                                   type="button"
                                   onClick={() => bill && setBillActionTarget({ studentId: student.id, studentName: student.name, phone: billingPhone(student) ?? '', billId: bill.bill_id, amount: bill.amount, status: 'sent', billingMonth: SPECIAL_MONTH })}
-                                  className="flex items-center gap-0.5 text-[11px] font-bold text-[var(--orange)] bg-[var(--orange-dim)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all"
+                                  className="flex items-center gap-0.5 text-[11px] font-bold text-[var(--scheduled-text)] bg-[var(--orange-dim)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all"
                                   title="탭하면 파기/취소/재발송"
                                 >
                                   <Clock className="w-3 h-3" /> 발송됨
@@ -641,7 +663,7 @@ export default function SpecialPage() {
                                   type="button"
                                   onClick={() => handleBill(student, sp, `${grade.name}${cls.name}`, `${grade.name} ${formatClassName(cls)}`)}
                                   disabled={isBusy}
-                                  className="flex items-center gap-0.5 text-[11px] font-bold text-white bg-[var(--blue)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all disabled:opacity-50"
+                                  className="flex items-center gap-0.5 text-[11px] font-bold text-[var(--on-action)] bg-[var(--blue)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all disabled:opacity-50"
                                 >
                                   {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
                                   청구
@@ -674,7 +696,7 @@ export default function SpecialPage() {
           <h2 className="text-base font-bold text-[var(--text-2)] mb-2">{label}</h2>
           <div className="space-y-3">
             {grps.map(group => {
-              const students = group.students.filter(isSpecialActive)
+              const students = groupRosters.get(group.id) ?? []
               const pendingN = students.filter(s =>
                 !groupBillByStudent.get(`${s.id}|${group.bill_note}`) && !groupPayByStudent.get(`${s.id}|${group.bill_note}`)
                 && !isBatchExcluded(s),
@@ -683,7 +705,7 @@ export default function SpecialPage() {
               const groupStat = sectionStats.get(group.id)
               const isGroupExpanded = expandedSections.has(group.id)
               return (
-                <div key={group.id} className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+                <div data-paper-card="" key={group.id} className="rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
                   <div
                     className={`flex items-start justify-between gap-2 px-4 py-2.5 bg-[var(--bg-card-hover)]/50 ${isGroupExpanded ? 'border-b border-[var(--border)]' : ''} cursor-pointer active:bg-[var(--bg-elevated)] select-none`}
                     onClick={() => toggleSection(group.id)}
@@ -712,7 +734,7 @@ export default function SpecialPage() {
                         type="button"
                         onClick={(e) => { e.stopPropagation(); handleGroupBatch(group) }}
                         disabled={!!batch || !!billing}
-                        className="flex items-center gap-0.5 text-[11px] font-bold text-white bg-[var(--blue)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all disabled:opacity-50 whitespace-nowrap shrink-0 mt-0.5"
+                        className="flex items-center gap-0.5 text-[11px] font-bold text-[var(--on-action)] bg-[var(--blue)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all disabled:opacity-50 whitespace-nowrap shrink-0 mt-0.5"
                       >
                         {isBatching && batch
                           ? <><Loader2 className="w-3 h-3 animate-spin" />{batch.done}/{batch.total}</>
@@ -759,7 +781,7 @@ export default function SpecialPage() {
                               <TButton
                                 type="button"
                                 onClick={() => bill && setBillActionTarget({ studentId: student.id, studentName: student.name, phone: billingPhone(student as unknown as Student) ?? '', billId: bill.bill_id, amount: bill.amount, status: 'sent', billingMonth: SPECIAL_MONTH })}
-                                className="flex items-center gap-0.5 text-[11px] font-bold text-[var(--orange)] bg-[var(--orange-dim)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all"
+                                className="flex items-center gap-0.5 text-[11px] font-bold text-[var(--scheduled-text)] bg-[var(--orange-dim)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all"
                                 title="탭하면 파기/취소/재발송"
                               >
                                 <Clock className="w-3 h-3" /> 발송됨
@@ -779,7 +801,7 @@ export default function SpecialPage() {
                                 type="button"
                                 onClick={() => handleGroupBill(student, group)}
                                 disabled={isBusy}
-                                className="flex items-center gap-0.5 text-[11px] font-bold text-white bg-[var(--blue)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all disabled:opacity-50"
+                                className="flex items-center gap-0.5 text-[11px] font-bold text-[var(--on-action)] bg-[var(--blue)] px-2 py-0.5 rounded-full hover:opacity-90 active:scale-95 transition-all disabled:opacity-50"
                               >
                                 {isBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
                                 청구
@@ -969,7 +991,7 @@ function ReceiptBadge({
         className="hidden"
         onChange={e => { onUpload(payment.id, e.target.files); e.currentTarget.value = '' }}
       />
-      <span className="flex items-center gap-0.5 text-[10px] font-bold text-[var(--orange)] bg-[var(--orange-dim)] px-1.5 py-0.5 rounded-full animate-pulse">
+      <span className="flex items-center gap-0.5 text-[10px] font-bold text-[var(--scheduled-text)] bg-[var(--orange-dim)] px-1.5 py-0.5 rounded-full animate-pulse">
         <Camera className="w-3 h-3" />영수증
       </span>
     </label>

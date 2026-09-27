@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
 
     const { data: oldBill } = await supabase
       .from('tuition_bill_history')
-      .select('student_id, billing_month, phone, is_regular_tuition, status, bill_note, amount')
+      .select('student_id, billing_month, phone, is_regular_tuition, status, bill_note, bill_type, amount, supersedes_bill_id')
       .eq('bill_id', billId)
       .single()
 
@@ -110,9 +110,10 @@ export async function POST(request: NextRequest) {
         phone: oldBill.phone,
         billing_month: oldBill.billing_month,
         is_regular_tuition: oldBill.is_regular_tuition,
-        bill_note: '수동 재발송 예약',
+        bill_note: oldBill.bill_note,
+        bill_type: oldBill.bill_type,
         send_type: 'reissue',
-        payload: { amount, productName, message: `${student.name} ${productName}`, oldBillId: billId },
+        payload: { amount, productName, message: `${student.name} ${productName}`, oldBillId: billId, ...(oldBill.supersedes_bill_id ? { supersedesBillId: oldBill.supersedes_bill_id } : {}) },
         scheduled_at: scheduledAt.toISOString(),
         status: 'pending',
       })
@@ -120,6 +121,8 @@ export async function POST(request: NextRequest) {
         console.error('[PaySsam reissue] 큐 등록 실패:', queueError)
         return NextResponse.json({ error: '예약 등록 실패' }, { status: 500 })
       }
+      await writeAuditLog('payment', oldBill.student_id, 'update',
+        '수동 재발송 예약', { billId })
       return scheduledResponse(scheduledAt, '재발송')
     }
 
@@ -141,20 +144,30 @@ export async function POST(request: NextRequest) {
       .from('tuition_bill_history')
       .update({
         status: 'destroyed',
-        bill_note: realStatus === 'destroyed' ? '결제선생 파기 동기화' : '수동 재발송으로 파기',
         updated_at: new Date().toISOString(),
       })
       .eq('bill_id', billId)
 
+    await writeAuditLog('payment', oldBill.student_id, 'update',
+      realStatus === 'destroyed' ? '결제선생 파기 동기화' : '수동 재발송으로 파기', { billId })
+
     // 2단계: 새 청구서 발송 (새 bill_id 자동 발급)
     const productName = defaultBillProductName(oldBill.billing_month)
-    const sendResult = await sendBill({
-      studentName: student.name,
-      phone: oldBill.phone,
-      amount,
-      productName,
-      message: `${student.name} ${productName}`,
-    }) as { code?: string; msg?: string; bill_id?: string; shortURL?: string }
+    let sendResult: { code?: string; msg?: string; bill_id?: string; shortURL?: string }
+    try {
+      sendResult = await sendBill({
+        studentName: student.name,
+        phone: oldBill.phone,
+        amount,
+        productName,
+        message: `${student.name} ${productName}`,
+      })
+    } catch (error) {
+      await writeAuditLog('payment', oldBill.student_id, 'update',
+        `⚠️ 발송 결과 불명확: ${oldBill.billing_month} [reissue] — 결제선생에서 실발송 여부 확인 후 수동 처리`,
+        { error: error instanceof Error ? error.message : String(error) })
+      return NextResponse.json({ code: 'SEND_RESULT_UNKNOWN', error: '결제선생 응답을 받지 못했습니다. 결제선생에서 발송 여부를 확인한 뒤 다시 시도하세요.' }, { status: 502 })
+    }
 
     if (sendResult.code === '0000') {
       const { error: dbErr } = await recordSentBill({
@@ -166,8 +179,14 @@ export async function POST(request: NextRequest) {
         short_url: sendResult.shortURL ?? null,
         sent_at: new Date().toISOString(),
         is_regular_tuition: oldBill.is_regular_tuition,
-        bill_note: '수동 재발송',
+        bill_note: oldBill.bill_note,
+        bill_type: oldBill.bill_type,
+        // 정산 청구서(중도퇴원 정산)를 재발송하면 콜백이 bill_note 로 '정산 처리완료'를 마킹한다 — 환불 링크도
+        // 같이 승계해야 기존 완납분이 실제로 환불된다(2026-09-05 astra 병합 검수: note 만 승계하면 이중납부가 묻힘).
+        ...(oldBill.supersedes_bill_id ? { supersedes_bill_id: oldBill.supersedes_bill_id } : {}),
       })
+      await writeAuditLog('payment', oldBill.student_id, 'update',
+        '수동 재발송', { oldBillId: billId, billId: sendResult.bill_id })
       if (dbErr) {
         // 2026-07-05 9app-full-review: DB기록 실패 에스컬레이션(중복발송 가드 사각 방지).
         console.error('[PaySsam] reissue DB기록 실패:', dbErr)

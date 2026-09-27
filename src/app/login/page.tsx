@@ -37,7 +37,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm py-10">
         <div className="text-center mb-10">
           <div className="w-16 h-16 bg-[var(--blue)] rounded-3xl flex items-center justify-center mx-auto mb-5">
-            <span className="text-white text-2xl font-extrabold">W</span>
+            <span className="text-[var(--on-action)] text-2xl font-extrabold">W</span>
           </div>
           <h1 className="text-[24px] font-extrabold text-[var(--text-1)] tracking-tight">원비관리</h1>
           <p className="text-[15px] text-[var(--text-4)] mt-2">학원 원비 관리 시스템</p>
@@ -56,7 +56,7 @@ export default function LoginPage() {
           />
           {error && <p className="text-[var(--red)] text-[14px] text-center py-1">{error}</p>}
           <TButton type="submit" disabled={loading}
-            className="w-full py-4 bg-[var(--blue)] text-white rounded-2xl text-[16px] font-bold hover:bg-[#2970dd] disabled:bg-[var(--bg-card-hover)] disabled:text-[var(--text-4)] transition-all active:scale-[0.98]">
+            className="w-full py-4 bg-[var(--blue)] text-[var(--on-action)] rounded-2xl text-[16px] font-bold hover:bg-[var(--blue-hover)] disabled:bg-[var(--bg-card-hover)] disabled:text-[var(--text-4)] transition-all active:scale-[0.98]">
             {loading ? '로그인 중...' : '로그인'}
           </TButton>
         </form>

@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
+import { motion } from '@/components/paperMotion'
 import { ChevronRight, Send, Users, MessageSquare, Megaphone, ImagePlus, BookOpen, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useGrades, safeMutate, getActiveStudents } from '@/lib/utils'
@@ -119,7 +120,7 @@ export default function NoticePage() {
   const { data: grades = [] } = useGrades<GradeWithClasses[]>()
   const [content, setContent] = useState('')
   const [isAd, setIsAd] = useState(false)
-  // 수신자 기본 미선택 — 학부모/학생을 명시적으로 골라야 전송 버튼 활성화 (2026-07-13 msg 3608)
+  // 수신자 기본 미선택 — 학부모/학생을 명시적으로 골라야 전송 버튼 활성화 (2026-07-13)
   const [toParent, setToParent] = useState(false)   // 수신자: 학부모
   const [toStudent, setToStudent] = useState(false) // 수신자: 학생 본인
   const [tab, setTab] = useState<'compose' | 'history'>('compose')
@@ -448,7 +449,7 @@ export default function NoticePage() {
             <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
               gradeAllSelected ? 'bg-[var(--blue)] border-[var(--blue)]' : gradePartial ? 'bg-[var(--blue-dim)] border-[var(--blue)]' : 'border-[var(--border)]'
             }`}>
-              {gradeAllSelected && <span className="text-white text-xs leading-none">✓</span>}
+              {gradeAllSelected && <span className="text-[var(--on-action)] text-xs leading-none">✓</span>}
               {gradePartial && <span className="text-[var(--blue)] text-xs leading-none">−</span>}
             </div>
             <span className="text-[14px] font-bold text-[var(--text-1)]">{g.name}</span>
@@ -493,7 +494,7 @@ export default function NoticePage() {
                         <div className={`w-4 h-4 rounded border-[1.5px] flex items-center justify-center transition-colors ${
                           classAllSelected ? 'bg-[var(--blue)] border-[var(--blue)]' : classPartial ? 'bg-[var(--blue-dim)] border-[var(--blue)]' : 'border-[var(--border)]'
                         }`}>
-                          {classAllSelected && <span className="text-white text-[10px] leading-none">✓</span>}
+                          {classAllSelected && <span className="text-[var(--on-action)] text-[10px] leading-none">✓</span>}
                           {classPartial && <span className="text-[var(--blue)] text-[10px] leading-none">−</span>}
                         </div>
                         <span className="text-[13px] text-[var(--text-2)]">{formatClassName(c)}</span>
@@ -524,11 +525,11 @@ export default function NoticePage() {
                                 <div className={`w-3.5 h-3.5 rounded border-[1.5px] flex items-center justify-center transition-colors ${
                                   selected ? 'bg-[var(--blue)] border-[var(--blue)]' : 'border-[var(--border)]'
                                 }`}>
-                                  {selected && <span className="text-white text-[9px] leading-none">✓</span>}
+                                  {selected && <span className="text-[var(--on-action)] text-[9px] leading-none">✓</span>}
                                 </div>
                                 <span className="text-[12px] text-[var(--text-2)]">{s.name}</span>
                                 {!hasPhone && (
-                                  <span className="text-[9px] px-1 py-0.5 rounded bg-[var(--orange-dim)] text-[var(--orange)]">학부모 폰 X</span>
+                                  <span className="text-[9px] px-1 py-0.5 rounded bg-[var(--orange-dim)] text-[var(--scheduled-text)]">학부모 폰 X</span>
                                 )}
                               </button>
                             )
@@ -566,7 +567,7 @@ export default function NoticePage() {
             key={k}
             type="button"
             onClick={() => setTab(k)}
-            className={`flex-1 py-2 rounded-lg text-[13px] font-bold transition-colors ${tab === k ? 'bg-[var(--blue)] text-white' : 'text-[var(--text-3)] hover:text-[var(--text-1)]'}`}
+            className={`flex-1 py-2 rounded-lg text-[13px] font-bold transition-colors ${tab === k ? 'bg-[var(--blue)] text-[var(--on-action)]' : 'text-[var(--text-3)] hover:text-[var(--text-1)]'}`}
           >
             {label}
           </button>
@@ -591,7 +592,7 @@ export default function NoticePage() {
             }`}
           >
             <span className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${toParent ? 'bg-[var(--blue)] border-[var(--blue)]' : 'border-[var(--border)]'}`}>
-              {toParent && <span className="text-white text-[10px] leading-none">✓</span>}
+              {toParent && <span className="text-[var(--on-action)] text-[10px] leading-none">✓</span>}
             </span>
             학부모
           </button>
@@ -603,7 +604,7 @@ export default function NoticePage() {
             }`}
           >
             <span className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${toStudent ? 'bg-[var(--blue)] border-[var(--blue)]' : 'border-[var(--border)]'}`}>
-              {toStudent && <span className="text-white text-[10px] leading-none">✓</span>}
+              {toStudent && <span className="text-[var(--on-action)] text-[10px] leading-none">✓</span>}
             </span>
             학생
           </button>
@@ -713,7 +714,7 @@ export default function NoticePage() {
           <div className={`mt-0.5 w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors flex-shrink-0 ${
             isAd ? 'bg-[var(--orange)] border-[var(--orange)]' : 'border-[var(--border)]'
           }`}>
-            {isAd && <span className="text-white text-xs leading-none">✓</span>}
+            {isAd && <span className="text-[var(--on-action)] text-xs leading-none">✓</span>}
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-1.5 text-[13px] font-bold text-[var(--text-1)]">
@@ -744,7 +745,7 @@ export default function NoticePage() {
             onClick={toggleAll}
             className={`text-[12px] px-3 py-1 rounded-full font-semibold transition-colors ${
               allSelected
-                ? 'bg-[var(--blue)] text-white'
+                ? 'bg-[var(--blue)] text-[var(--on-action)]'
                 : 'bg-[var(--bg-elevated)] text-[var(--text-3)] hover:text-[var(--text-1)]'
             }`}
           >
@@ -779,7 +780,7 @@ export default function NoticePage() {
                     <div className={`w-5 h-5 rounded-md border-2 flex items-center justify-center transition-colors ${
                       subjAllSelected ? 'bg-[var(--blue)] border-[var(--blue)]' : subjPartial ? 'bg-[var(--blue-dim)] border-[var(--blue)]' : 'border-[var(--border)]'
                     }`}>
-                      {subjAllSelected && <span className="text-white text-xs leading-none">✓</span>}
+                      {subjAllSelected && <span className="text-[var(--on-action)] text-xs leading-none">✓</span>}
                       {subjPartial && <span className="text-[var(--blue)] text-xs leading-none">−</span>}
                     </div>
                     <span className={`w-2 h-2 rounded-full ${subjectDot(subject)}`} />
@@ -816,7 +817,7 @@ export default function NoticePage() {
           <div className="flex gap-3">
             <span className="text-[var(--text-3)]">대상: <strong className="text-[var(--text-1)] tabular-nums">{recipientStats.withPhone}</strong>명</span>
             {recipientStats.withoutPhone > 0 && (
-              <span className="text-[var(--orange)]">미발송: <strong className="tabular-nums">{recipientStats.withoutPhone}</strong></span>
+              <span className="text-[var(--scheduled-text)]">미발송: <strong className="tabular-nums">{recipientStats.withoutPhone}</strong></span>
             )}
           </div>
           <span className="text-[var(--text-4)] tabular-nums">
@@ -827,7 +828,7 @@ export default function NoticePage() {
           type="button"
           onClick={() => setShowConfirm(true)}
           disabled={submitting || (!toParent && !toStudent) || recipientStats.withPhone === 0 || !content.trim() || nightBlocked || imgBusy}
-          className="w-full py-3.5 rounded-2xl bg-[var(--blue)] text-white text-[15px] font-bold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.99] transition-all shadow-lg"
+          className="w-full py-3.5 rounded-2xl bg-[var(--blue)] text-[var(--on-action)] text-[15px] font-bold flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.99] transition-all shadow-lg"
         >
           <Send className="w-4 h-4" />
           {submitting ? '발송 중...'
@@ -883,7 +884,7 @@ export default function NoticePage() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[12px] font-bold text-[var(--blue)] bg-[var(--blue-dim)] px-2 py-0.5 rounded-full">{aud}</span>
-                      {d.isAd && <span className="text-[11px] font-bold text-[var(--orange)] bg-[var(--orange-dim)] px-2 py-0.5 rounded-full">광고</span>}
+                      {d.isAd && <span className="text-[11px] font-bold text-[var(--scheduled-text)] bg-[var(--orange-dim)] px-2 py-0.5 rounded-full">광고</span>}
                       {d.hasImage && <span className="text-[11px] font-bold text-[var(--blue)] bg-[var(--blue-dim)] px-2 py-0.5 rounded-full">📷 이미지</span>}
                     </div>
                     <span className="text-[11px] text-[var(--text-4)] tabular-nums">{dateStr}</span>
@@ -920,10 +921,10 @@ export default function NoticePage() {
         {showCovers && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
+            className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
             onClick={() => setShowCovers(false)}
           >
-            <motion.div
+            <motion.div data-paper-card=""
               initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 320, damping: 28 }}
               className="bg-[var(--bg-card)] w-full max-w-md rounded-2xl p-5 shadow-2xl max-h-[80vh] flex flex-col"
@@ -983,10 +984,10 @@ export default function NoticePage() {
         {showConfirm && (
           <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
+            className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-4"
             onClick={() => setShowConfirm(false)}
           >
-            <motion.div
+            <motion.div data-paper-card=""
               initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 320, damping: 28 }}
               className="bg-[var(--bg-card)] w-full max-w-sm rounded-2xl p-5 shadow-2xl"
@@ -1020,7 +1021,7 @@ export default function NoticePage() {
                 <p className="text-[13px] text-[var(--text-2)] whitespace-pre-wrap break-words">{finalText}</p>
               </div>
               {isAd && (
-                <p className="text-[11px] text-[var(--orange)] mb-3 leading-relaxed">
+                <p className="text-[11px] text-[var(--scheduled-text)] mb-3 leading-relaxed">
                   ⚠️ 광고 발송: 사전 수신동의를 받은 학부모에게만 보내야 합니다. 위반 시 정보통신망법 과태료(최대 3천만원)
                 </p>
               )}
@@ -1036,7 +1037,7 @@ export default function NoticePage() {
                   type="button"
                   onClick={handleSend}
                   disabled={submitting}
-                  className={`flex-1 py-3 rounded-xl text-white font-bold disabled:opacity-50 ${isAd ? 'bg-[var(--orange)]' : 'bg-[var(--blue)]'}`}
+                  className={`flex-1 py-3 rounded-xl text-[var(--on-action)] font-bold disabled:opacity-50 ${isAd ? 'bg-[var(--orange)]' : 'bg-[var(--blue)]'}`}
                 >
                   {submitting ? '발송 중...' : '발송'}
                 </button>

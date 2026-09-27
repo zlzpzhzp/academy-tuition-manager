@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await supabase
     .from('tuition_bill_queue')
-    .select('id, student_id, billing_month, send_type, scheduled_at, is_regular_tuition, created_at')
+    .select('id, student_id, billing_month, send_type, scheduled_at, is_regular_tuition, bill_type, created_at')
     .eq('billing_month', month)
     .eq('status', 'pending')
     .order('scheduled_at', { ascending: true })

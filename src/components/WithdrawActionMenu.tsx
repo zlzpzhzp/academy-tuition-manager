@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
+import { motion } from '@/components/paperMotion'
 import { createPortal } from 'react-dom'
 import { X, RotateCcw, CheckCircle2, Undo2, Calculator, Calendar } from 'lucide-react'
 import { toast } from 'sonner'
@@ -235,19 +236,19 @@ function WithdrawActionMenuBody({ target, billingMonth, onClose, onMarked }: Pro
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         transition={{ duration: 0.18 }}
-        className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center"
+        className="fixed inset-0 z-[200] bg-[var(--bg-overlay)] backdrop-blur-sm flex items-end sm:items-center justify-center"
         onClick={onClose}
       >
-        <motion.div
+        <motion.div data-paper-card=""
           key="sheet"
           initial={{ y: 40, opacity: 0, scale: 0.98 }}
           animate={{ y: 0, opacity: 1, scale: 1 }}
           exit={{ y: 40, opacity: 0, scale: 0.98 }}
           transition={{ type: 'spring', stiffness: 320, damping: 28 }}
-          className="w-full sm:max-w-md bg-[var(--bg-card)] rounded-t-3xl sm:rounded-3xl border border-[var(--border)] shadow-2xl overflow-hidden"
+          className="w-full sm:max-w-md max-h-[88vh] sm:max-h-[88vh] flex flex-col min-h-0 bg-[var(--bg-card)] rounded-t-3xl sm:rounded-3xl border border-[var(--border)] shadow-2xl overflow-hidden"
           onClick={(e) => e.stopPropagation()}
         >
-          <div className="flex items-center justify-between px-5 pt-5 pb-3">
+          <div className="flex shrink-0 items-center justify-between px-5 pt-5 pb-3">
             <div>
               <p className="text-[11px] tracking-widest text-[var(--text-4)] font-semibold">퇴원 처리 — 환불/청구서</p>
               <h2 className="text-[18px] font-bold text-[var(--text-1)] mt-0.5">{target.studentName}</h2>
@@ -262,152 +263,154 @@ function WithdrawActionMenuBody({ target, billingMonth, onClose, onMarked }: Pro
             </button>
           </div>
 
-          {/* 환불 계산기 — 퇴원 처리/처리중 학생도 바로 환불액 확인 (2026-06-13 사용자 지시) */}
-          {target.fee != null && target.enrollmentDate && (
-            <div className="mx-5 mb-3 p-4 rounded-2xl border border-[var(--border)] bg-[var(--bg)]">
-              <div className="flex items-center gap-2 mb-3">
-                <Calculator className="w-4 h-4 text-[var(--text-3)]" />
-                <p className="text-[13px] font-bold text-[var(--text-1)]">환불 계산기</p>
-              </div>
-              <div className="mb-3">
-                <span className="block text-[11px] text-[var(--text-4)] mb-1">마지막 수업일</span>
-                <button
-                  ref={dateBtnRef}
-                  type="button"
-                  onClick={() => {
-                    if (!effectiveLastClass) setLastClassDate(getTodayString())
-                    setPickerOpen(true)
-                  }}
-                  className="flex items-center gap-2 px-3 py-2 border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-1)] rounded-lg text-sm hover:bg-[var(--bg-card-hover)] active:scale-[0.99] transition-all"
-                >
-                  <Calendar className="w-4 h-4 text-[var(--text-3)]" />
-                  <span className="tabular-nums">{effectiveLastClass || '날짜 선택'}</span>
-                </button>
-                {pickerOpen && (
-                  <DatePickerPopup
-                    inlineDate={effectiveLastClass || getTodayString()}
-                    onDateChange={setLastClassDate}
-                    onClose={() => setPickerOpen(false)}
-                    anchorRef={dateBtnRef}
-                    paymentDueDay={target.paymentDueDay}
-                  />
+          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+            {/* 환불 계산기 — 퇴원 처리/처리중 학생도 바로 환불액 확인 (2026-06-13 사용자 지시) */}
+            {target.fee != null && target.enrollmentDate && (
+              <div className="mx-5 mb-3 p-4 rounded-2xl border border-[var(--border)] bg-[var(--bg)]">
+                <div className="flex items-center gap-2 mb-3">
+                  <Calculator className="w-4 h-4 text-[var(--text-3)]" />
+                  <p className="text-[13px] font-bold text-[var(--text-1)]">환불 계산기</p>
+                </div>
+                <div className="mb-3">
+                  <span className="block text-[11px] text-[var(--text-4)] mb-1">마지막 수업일</span>
+                  <button
+                    ref={dateBtnRef}
+                    type="button"
+                    onClick={() => {
+                      if (!effectiveLastClass) setLastClassDate(getTodayString())
+                      setPickerOpen(true)
+                    }}
+                    className="flex items-center gap-2 px-3 py-2 border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-1)] rounded-lg text-sm hover:bg-[var(--bg-card-hover)] active:scale-[0.99] transition-all"
+                  >
+                    <Calendar className="w-4 h-4 text-[var(--text-3)]" />
+                    <span className="tabular-nums">{effectiveLastClass || '날짜 선택'}</span>
+                  </button>
+                  {pickerOpen && (
+                    <DatePickerPopup
+                      inlineDate={effectiveLastClass || getTodayString()}
+                      onDateChange={setLastClassDate}
+                      onClose={() => setPickerOpen(false)}
+                      anchorRef={dateBtnRef}
+                      paymentDueDay={target.paymentDueDay}
+                    />
+                  )}
+                </div>
+                {refund ? (
+                  <>
+                    {refund.isSessionBased && target.classDays && (
+                      <div className="px-3 py-2 mb-3 bg-[var(--blue-dim)] rounded-lg text-[11px] text-[var(--blue)]">
+                        수업 요일: {parseClassDays(target.classDays)?.map(d => DAY_LABELS[d]).join(', ')} (수업 횟수 기반)
+                      </div>
+                    )}
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="p-2.5 bg-[var(--bg-elevated)] rounded-lg">
+                        <p className="text-[var(--text-4)] text-[11px]">{refund.isSessionBased ? '총 수업 횟수' : '등록기간'}</p>
+                        <p className="font-medium">{refund.totalSessions}{refund.isSessionBased ? '회' : '일'}</p>
+                      </div>
+                      <div className="p-2.5 bg-[var(--bg-elevated)] rounded-lg">
+                        <p className="text-[var(--text-4)] text-[11px]">{refund.isSessionBased ? '경과 수업' : '경과일수'}</p>
+                        <p className="font-medium">{refund.elapsedSessions}{refund.isSessionBased ? '회' : '일'}</p>
+                      </div>
+                      <div className="p-2.5 bg-[var(--bg-elevated)] rounded-lg">
+                        <p className="text-[var(--text-4)] text-[11px]">{refund.isSessionBased ? '잔여 수업' : '잔여일수'}</p>
+                        <p className="font-medium">{refund.remainingSessions}{refund.isSessionBased ? '회' : '일'}</p>
+                      </div>
+                      <div className="p-2.5 bg-[var(--blue-dim)] rounded-lg">
+                        <p className="text-[var(--blue)] text-[11px]">환불 예상액</p>
+                        <p className="font-bold text-[var(--blue)]">{formatWon(refund.refundAmount)}</p>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-[var(--text-4)] mt-2">
+                      원비 {formatWon(target.fee)} × 잔여 {refund.remainingSessions}{refund.isSessionBased ? '회' : '일'} / {refund.totalSessions}{refund.isSessionBased ? '회' : '일'}
+                    </p>
+
+                    {/* 원클릭: 기존 결제 취소 → 실수강분 재청구 (2026-06-15 사용자 지시) */}
+                    {(() => {
+                      const resumed = (target.fee ?? 0) - refund.refundAmount
+                      // 미납 퇴원은 환불할 돈이 없다 — 라벨에 '결제 후 기존 환불'을 쓰면 화면이 거짓말을 한다.
+                      // 서버 판정(plan)이 오면 그걸 쓰고, 아직이면 화면 값으로 잠정 표시.
+                      const unpaid = plan?.mode ? plan.mode === 'unpaid' : target.regularBillStatus === 'sent'
+                      return (
+                        <button
+                          type="button"
+                          disabled={busy !== null || resumed <= 0}
+                          onClick={resettleAndRebill}
+                          className="mt-3 w-full flex items-center justify-between gap-2 px-4 py-3 rounded-xl font-bold text-left transition-all active:scale-[0.99] disabled:opacity-50"
+                          style={{ background: 'var(--blue)', color: 'var(--on-action)' }}
+                        >
+                          <span className="flex flex-col">
+                            <span className="text-[13px]">
+                              {unpaid ? '정산분 재청구 (미납분 파기 후 청구)' : '정산분 재청구 (결제 후 기존 환불)'}
+                            </span>
+                            <span className="text-[10px] font-medium opacity-80">
+                              {unpaid
+                                ? '미납 청구서 파기 → 실수강분만 청구 (환불 없음)'
+                                : '실수강분 청구 → 결제완료되면 기존 결제 자동 환불'}
+                            </span>
+                          </span>
+                          <span className="text-[15px] font-extrabold tabular-nums shrink-0">
+                            {busy === 'resettle' ? '처리 중…' : `${formatWon(resumed)}`}
+                          </span>
+                        </button>
+                      )
+                    })()}
+                  </>
+                ) : (
+                  <p className="text-[11px] text-[var(--text-4)]">마지막 수업일을 선택하면 환불 예상액이 계산됩니다.</p>
                 )}
               </div>
-              {refund ? (
-                <>
-                  {refund.isSessionBased && target.classDays && (
-                    <div className="px-3 py-2 mb-3 bg-[var(--blue-dim)] rounded-lg text-[11px] text-[var(--blue)]">
-                      수업 요일: {parseClassDays(target.classDays)?.map(d => DAY_LABELS[d]).join(', ')} (수업 횟수 기반)
-                    </div>
-                  )}
-                  <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div className="p-2.5 bg-[var(--bg-elevated)] rounded-lg">
-                      <p className="text-[var(--text-4)] text-[11px]">{refund.isSessionBased ? '총 수업 횟수' : '등록기간'}</p>
-                      <p className="font-medium">{refund.totalSessions}{refund.isSessionBased ? '회' : '일'}</p>
-                    </div>
-                    <div className="p-2.5 bg-[var(--bg-elevated)] rounded-lg">
-                      <p className="text-[var(--text-4)] text-[11px]">{refund.isSessionBased ? '경과 수업' : '경과일수'}</p>
-                      <p className="font-medium">{refund.elapsedSessions}{refund.isSessionBased ? '회' : '일'}</p>
-                    </div>
-                    <div className="p-2.5 bg-[var(--bg-elevated)] rounded-lg">
-                      <p className="text-[var(--text-4)] text-[11px]">{refund.isSessionBased ? '잔여 수업' : '잔여일수'}</p>
-                      <p className="font-medium">{refund.remainingSessions}{refund.isSessionBased ? '회' : '일'}</p>
-                    </div>
-                    <div className="p-2.5 bg-[var(--blue-dim)] rounded-lg">
-                      <p className="text-[var(--blue)] text-[11px]">환불 예상액</p>
-                      <p className="font-bold text-[var(--blue)]">{formatWon(refund.refundAmount)}</p>
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-[var(--text-4)] mt-2">
-                    원비 {formatWon(target.fee)} × 잔여 {refund.remainingSessions}{refund.isSessionBased ? '회' : '일'} / {refund.totalSessions}{refund.isSessionBased ? '회' : '일'}
-                  </p>
+            )}
 
-                  {/* 원클릭: 기존 결제 취소 → 실수강분 재청구 (2026-06-15 사용자 지시) */}
-                  {(() => {
-                    const resumed = (target.fee ?? 0) - refund.refundAmount
-                    // 미납 퇴원은 환불할 돈이 없다 — 라벨에 '결제 후 기존 환불'을 쓰면 화면이 거짓말을 한다.
-                    // 서버 판정(plan)이 오면 그걸 쓰고, 아직이면 화면 값으로 잠정 표시.
-                    const unpaid = plan?.mode ? plan.mode === 'unpaid' : target.regularBillStatus === 'sent'
-                    return (
-                      <button
-                        type="button"
-                        disabled={busy !== null || resumed <= 0}
-                        onClick={resettleAndRebill}
-                        className="mt-3 w-full flex items-center justify-between gap-2 px-4 py-3 rounded-xl font-bold text-left transition-all active:scale-[0.99] disabled:opacity-50"
-                        style={{ background: 'var(--blue)', color: '#fff' }}
-                      >
-                        <span className="flex flex-col">
-                          <span className="text-[13px]">
-                            {unpaid ? '정산분 재청구 (미납분 파기 후 청구)' : '정산분 재청구 (결제 후 기존 환불)'}
-                          </span>
-                          <span className="text-[10px] font-medium opacity-80">
-                            {unpaid
-                              ? '미납 청구서 파기 → 실수강분만 청구 (환불 없음)'
-                              : '실수강분 청구 → 결제완료되면 기존 결제 자동 환불'}
-                          </span>
-                        </span>
-                        <span className="text-[15px] font-extrabold tabular-nums shrink-0">
-                          {busy === 'resettle' ? '처리 중…' : `${formatWon(resumed)}`}
-                        </span>
-                      </button>
-                    )
-                  })()}
-                </>
-              ) : (
-                <p className="text-[11px] text-[var(--text-4)]">마지막 수업일을 선택하면 환불 예상액이 계산됩니다.</p>
-              )}
-            </div>
-          )}
+            <div className="px-5 pb-4 space-y-2">
+              {ACTION_OPTIONS.map(opt => {
+                const Icon = opt.icon
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => apply(opt.status, opt.key)}
+                    className="w-full flex items-start gap-3 px-4 py-3 rounded-2xl border border-[var(--border)] hover:bg-[var(--bg-card-hover)] active:scale-[0.99] transition-all text-left disabled:opacity-50"
+                  >
+                    <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: `color-mix(in oklab, ${ACCENT} 12%, transparent)`, color: ACCENT }}>
+                      <Icon className="w-4 h-4" strokeWidth={2.2} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[14px] font-bold text-[var(--text-1)]">{opt.label}</p>
+                      <p className="text-[11px] text-[var(--text-4)] mt-0.5">{opt.desc}</p>
+                    </div>
+                    {busy === opt.key && (
+                      <span className="text-[10px] text-[var(--text-4)] shrink-0 self-center">처리 중...</span>
+                    )}
+                  </button>
+                )
+              })}
 
-          <div className="px-5 pb-4 space-y-2">
-            {ACTION_OPTIONS.map(opt => {
-              const Icon = opt.icon
-              return (
+              {/* 퇴원 취소 (번복) — 처분이 아니라 복귀라 파란색으로 구분 */}
+              <div className="pt-2 mt-1 border-t border-[var(--border)]">
                 <button
-                  key={opt.key}
                   type="button"
                   disabled={busy !== null}
-                  onClick={() => apply(opt.status, opt.key)}
+                  onClick={cancelWithdrawal}
                   className="w-full flex items-start gap-3 px-4 py-3 rounded-2xl border border-[var(--border)] hover:bg-[var(--bg-card-hover)] active:scale-[0.99] transition-all text-left disabled:opacity-50"
                 >
-                  <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: `color-mix(in oklab, ${ACCENT} 12%, transparent)`, color: ACCENT }}>
-                    <Icon className="w-4 h-4" strokeWidth={2.2} />
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'var(--blue-dim)', color: 'var(--blue)' }}>
+                    <Undo2 className="w-4 h-4" strokeWidth={2.2} />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[14px] font-bold text-[var(--text-1)]">{opt.label}</p>
-                    <p className="text-[11px] text-[var(--text-4)] mt-0.5">{opt.desc}</p>
+                    <p className="text-[14px] font-bold text-[var(--text-1)]">퇴원 취소 (번복)</p>
+                    <p className="text-[11px] text-[var(--text-4)] mt-0.5">퇴원 해제하고 원래 반으로 복귀 — 퇴원 마킹도 초기화</p>
                   </div>
-                  {busy === opt.key && (
-                    <span className="text-[10px] text-[var(--text-4)] shrink-0 self-center">처리 중...</span>
-                  )}
+                  {busy === 'cancel_withdrawal' && <span className="text-[10px] text-[var(--text-4)] shrink-0 self-center">처리 중...</span>}
                 </button>
-              )
-            })}
-
-            {/* 퇴원 취소 (번복) — 처분이 아니라 복귀라 파란색으로 구분 */}
-            <div className="pt-2 mt-1 border-t border-[var(--border)]">
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={cancelWithdrawal}
-                className="w-full flex items-start gap-3 px-4 py-3 rounded-2xl border border-[var(--border)] hover:bg-[var(--bg-card-hover)] active:scale-[0.99] transition-all text-left disabled:opacity-50"
-              >
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'var(--blue-dim)', color: 'var(--blue)' }}>
-                  <Undo2 className="w-4 h-4" strokeWidth={2.2} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-[14px] font-bold text-[var(--text-1)]">퇴원 취소 (번복)</p>
-                  <p className="text-[11px] text-[var(--text-4)] mt-0.5">퇴원 해제하고 원래 반으로 복귀 — 퇴원 마킹도 초기화</p>
-                </div>
-                {busy === 'cancel_withdrawal' && <span className="text-[10px] text-[var(--text-4)] shrink-0 self-center">처리 중...</span>}
-              </button>
+              </div>
             </div>
-          </div>
 
-          <div className="px-5 pb-5 pt-1">
-            <p className="text-[10px] text-[var(--text-4)] leading-relaxed">
-              퇴원 학생의 결제 처리 상태를 표시합니다. 빨간 칩은 후속 작업이 남아있다는 뜻이며, 환불이 끝나면 초록 환불완료로 바꾸세요.
-            </p>
+            <div className="px-5 pt-1">
+              <p className="text-[10px] text-[var(--text-4)] leading-relaxed">
+                퇴원 학생의 결제 처리 상태를 표시합니다. 빨간 칩은 후속 작업이 남아있다는 뜻이며, 환불이 끝나면 초록 환불완료로 바꾸세요.
+              </p>
+            </div>
           </div>
         </motion.div>
       </motion.div>

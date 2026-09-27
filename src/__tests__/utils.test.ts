@@ -148,3 +148,13 @@ d2('todaysSubjectsLabel', () => {
     ex2(todaysSubjectsLabel([{ subject: '수학', classDays: null }, eng], 6)).toBe('영어')
   })
 })
+
+describe('stripBillTags — 수동 납부 메모 기본값에 결제선생 태그 복사 금지 (2026-09-27)', () => {
+  it('태그만 빼고 사람 메모는 남긴다', async () => {
+    const { stripBillTags } = await import('@/lib/utils')
+    expect(stripBillTags('[bill:TM-a1][bill:TM-b2] 합성 비고')).toBe('합성 비고')
+    expect(stripBillTags('[bill:TM-a1]')).toBe('')
+    expect(stripBillTags(null)).toBe('')
+    expect(stripBillTags('평범한 메모')).toBe('평범한 메모')
+  })
+})

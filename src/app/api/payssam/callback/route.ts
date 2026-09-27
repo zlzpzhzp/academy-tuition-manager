@@ -6,6 +6,7 @@ import { writeAuditLog } from '@/lib/auditLog'
 import { clearPaymentForBill } from '@/lib/paymentCancel'
 import { cancelBill } from '@/lib/payssam'
 import { sendSms } from '@/lib/solapi'
+import { IN_PROGRESS_STATUSES } from '@/lib/withdrawalStatuses'
 import { MESSAGE_PREFIX } from '@/lib/branding'
 
 function verifyApiKey(received: unknown): boolean {
@@ -177,59 +178,107 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // 폴백 정산은 청구월 외에도 진행중 행을 남긴다. 환불 실패 시 요청 월의 진행중 표시를 보존한다.
+      // 환불 처리 뒤 같은 학생의 진행중만 닫고 기존 종결 행은 보존한다.
+      if (billData && billData.bill_note === '중도퇴원 정산' && !resettleRefundFailed) {
+        // 이 보조 마킹 실패로 결제선생 재전송을 유발하지 않는다 — 납부 처리는 계속하고 감사로그로 알린다.
+        try {
+          const { error: statusError } = await supabase
+            .from('tuition_withdrawal_status')
+            .update({ status: 'resettled_paid', updated_at: new Date().toISOString() })
+            .eq('student_id', billData.student_id)
+            .in('status', [...IN_PROGRESS_STATUSES])
+          if (statusError) throw new Error(statusError.message)
+        } catch (error) {
+          await writeAuditLog('payment', billData.student_id, 'update',
+            `⚠️ 정산 진행중 상태 종결 실패: bill ${bill_id} — 결제완료 후 진행중 표시가 남을 수 있음, 수동 확인 필요`,
+            { bill_id, billing_month: billData.billing_month, error: error instanceof Error ? error.message : String(error) })
+        }
+      }
+
       if (billData && billData.is_regular_tuition !== false && !resettleRefundFailed) {
         const billTag = `[bill:${bill_id}]`
         const paidAmount = parseInt(appr_price) || billData.amount
         // 같은 학생+월의 기존 payssam row 조회 — 분할결제 누적 처리용.
         // maybeSingle()은 row 2건+에서 error→data=null fail-open으로 멱등검사가 우회돼
         // 콜백 재시도마다 중복 insert되던 버그 → 배열 조회 + billTag 우선매칭 (2026-07-12 감사 #2)
-        const { data: monthRows } = await supabase
-          .from('tuition_payments')
-          .select('id, amount, memo')
-          .eq('student_id', billData.student_id)
-          .eq('billing_month', billData.billing_month)
-          .eq('method', 'payssam')
-          .is('deleted_at', null)
-          .order('created_at', { ascending: true })
-          .limit(10)
+        let accumulationId: string | null = null
+        // 납부 row 조회·누적·삽입 어느 하나라도 실패하면 청구서는 paid 인데 납부 원장은 빈 상태다.
+        // 위 상태갱신·청구서 조회 실패 분기와 똑같이 비-0000 으로 응답해 결제선생 재전송을 유도한다 —
+        // 재호출은 멱등(상태갱신 동일값·정산 환불 oldBill.status==='paid' 가드·누적 billTag). (2026-09-06 코드비판 ①)
+        let paymentRecordFailed = false
+        for (let attempt = 0; attempt <= 3; attempt++) {
+          const { data: monthRows, error: monthError } = await supabase
+            .from('tuition_payments')
+            .select('id, amount, memo')
+            .eq('student_id', billData.student_id)
+            .eq('billing_month', billData.billing_month)
+            .eq('method', 'payssam')
+            .is('deleted_at', null)
+            .order('created_at', { ascending: true })
+            .limit(10)
 
-        // 이미 같은 bill_id 태그를 가진 row가 있으면 멱등 — 재처리 방지
-        const taggedRow = (monthRows || []).find(r => (r.memo || '').includes(billTag))
-        const existingMonth = taggedRow || (monthRows && monthRows[0]) || null
+          // 조회 오류는 1차·재조회 가리지 않고 중단 — 무시하면 monthRows=null 로 멱등검사가 비어 INSERT 로 직행해
+          // 이미 있는 납부 row 와 중복된다(2026-09-05 astra 병합 검수). 결제는 완료됐으므로 감사로그로 수동 확인 유도.
+          if (monthError) {
+            console.error('[PaySsam Callback] payments 조회 실패:', bill_id, monthError.message)
+            await writeAuditLog('payment', accumulationId, accumulationId ? 'update' : 'create',
+              `⚠️ 콜백 납부 ${accumulationId ? '누적' : '기록'} 실패: bill ${bill_id} ${paidAmount.toLocaleString()}원 — 납부 row 조회 실패로 미기록, 수동 확인 필요`,
+              { bill_id, student_id: billData.student_id, billing_month: billData.billing_month, paidAmount, error: monthError.message })
+            paymentRecordFailed = true
+            break
+          }
 
-        if (existingMonth) {
-          const alreadyHas = Boolean(taggedRow)
-          if (!alreadyHas) {
-            // 분할결제 두번째+ 콜백: 기존 row amount 누적 + memo 태그 추가
-            const { error: accError } = await supabase.from('tuition_payments')
-              .update({
-                amount: existingMonth.amount + paidAmount,
-                memo: `${existingMonth.memo || ''}${billTag}`,
-              })
-              .eq('id', existingMonth.id)
-            if (accError) {
-              // 2026-07-02: 콜백 기록 실패가 조용히 삼켜져 "냈는데 미납"이 생기던 사고 — 실패는 반드시 감사로그에 남긴다
-              console.error('[PaySsam Callback] payments 누적 실패:', bill_id, accError.message)
-              await writeAuditLog('payment', existingMonth.id, 'update',
-                `⚠️ 콜백 납부 누적 실패: bill ${bill_id} ${paidAmount.toLocaleString()}원 — 수동 확인 필요`,
-                { bill_id, paidAmount, error: accError.message })
+          // 이미 같은 bill_id 태그를 가진 row가 있으면 멱등 — 재처리 방지
+          const taggedRow = (monthRows || []).find(r => (r.memo || '').includes(billTag))
+          const existingMonth = taggedRow || (monthRows && monthRows[0]) || null
+
+          if (existingMonth) {
+            const alreadyHas = Boolean(taggedRow)
+            if (!alreadyHas) {
+              // 분할결제 두번째+ 콜백: 기존 row amount 누적 + memo 태그 추가
+              accumulationId = existingMonth.id
+              const { data: updatedRows, error: updateError } = await supabase.from('tuition_payments')
+                .update({
+                  amount: existingMonth.amount + paidAmount,
+                  memo: `${existingMonth.memo || ''}${billTag}`,
+                })
+                .eq('id', existingMonth.id)
+                .eq('amount', existingMonth.amount)
+                .select('id')
+              // 충돌 시 최신 금액·태그를 다시 읽어 멱등검사부터 재시도한다(최대 3회).
+              if (!updateError && !updatedRows?.length && attempt < 3) continue
+              const accError = updateError ?? (!updatedRows?.length ? { message: '동시 납부 누적 충돌 재시도 초과' } : null)
+              if (accError) {
+                // 2026-07-02: 콜백 기록 실패가 조용히 삼켜져 "냈는데 미납"이 생기던 사고 — 실패는 반드시 감사로그에 남긴다
+                console.error('[PaySsam Callback] payments 누적 실패:', bill_id, accError.message)
+                await writeAuditLog('payment', existingMonth.id, 'update',
+                  `⚠️ 콜백 납부 누적 실패: bill ${bill_id} ${paidAmount.toLocaleString()}원 — 수동 확인 필요`,
+                  { bill_id, paidAmount, error: accError.message })
+                paymentRecordFailed = true
+              }
+            }
+          } else {
+            const { error: insError } = await supabase.from('tuition_payments').insert({
+              student_id: billData.student_id,
+              amount: paidAmount,
+              method: 'payssam',
+              payment_date: getTodayString(),
+              billing_month: billData.billing_month,
+              memo: billTag,
+            })
+            if (insError) {
+              console.error('[PaySsam Callback] payments 기록 실패:', bill_id, insError.message)
+              await writeAuditLog('payment', null, 'create',
+                `⚠️ 콜백 납부 기록 실패: bill ${bill_id} ${paidAmount.toLocaleString()}원 — 결제완료인데 납부 미기록, 수동 확인 필요`,
+                { bill_id, student_id: billData.student_id, billing_month: billData.billing_month, paidAmount, error: insError.message })
+              paymentRecordFailed = true
             }
           }
-        } else {
-          const { error: insError } = await supabase.from('tuition_payments').insert({
-            student_id: billData.student_id,
-            amount: paidAmount,
-            method: 'payssam',
-            payment_date: getTodayString(),
-            billing_month: billData.billing_month,
-            memo: billTag,
-          })
-          if (insError) {
-            console.error('[PaySsam Callback] payments 기록 실패:', bill_id, insError.message)
-            await writeAuditLog('payment', null, 'create',
-              `⚠️ 콜백 납부 기록 실패: bill ${bill_id} ${paidAmount.toLocaleString()}원 — 결제완료인데 납부 미기록, 수동 확인 필요`,
-              { bill_id, student_id: billData.student_id, billing_month: billData.billing_month, paidAmount, error: insError.message })
-          }
+          break
+        }
+        if (paymentRecordFailed) {
+          return NextResponse.json({ code: '9999', msg: '납부 기록 실패' }, { status: 500 })
         }
       }
     }

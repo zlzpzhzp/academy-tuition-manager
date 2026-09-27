@@ -11,6 +11,7 @@ import { validateInput, rules } from '@/lib/validate'
 import { sendBulkSms } from '@/lib/solapi'
 import { writeAuditLog } from '@/lib/auditLog'
 import { parentPhone } from '@/lib/student-codes'
+import { IN_PROGRESS_STATUSES, TERMINAL_STATUSES } from '@/lib/withdrawalStatuses'
 
 interface Body {
   studentId: string
@@ -50,7 +51,26 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '학생을 찾을 수 없습니다' }, { status: 404 })
   }
   if (student.withdrawal_date) {
-    return NextResponse.json({ error: '퇴원생에게는 발송할 수 없습니다' }, { status: 400 })
+    // 퇴원 직후·진행중 정산 안내는 허용한다. 모든 달을 보고 진행중 없이 종결 상태만 남았을 때 차단한다.
+    const { data: withdrawalStatuses, error: statusError } = await supabase
+      .from('tuition_withdrawal_status')
+      .select('status, billing_month')
+      .eq('student_id', student.id)
+      .order('billing_month', { ascending: false })
+    // 정상 0행은 미종결이지만 조회 실패는 판정 불가이므로 발송하지 않는다.
+    if (statusError) {
+      return NextResponse.json({
+        error: '퇴원 정산 상태 조회에 실패해 발송을 중단했습니다. 잠시 후 다시 시도하세요.',
+        code: 'GUARD_QUERY_FAILED',
+      }, { status: 500 })
+    }
+    const hasInProgress = withdrawalStatuses?.some(row => IN_PROGRESS_STATUSES.includes(row.status))
+    const terminalStatus = withdrawalStatuses?.find(row => TERMINAL_STATUSES.includes(row.status))
+    if (!hasInProgress && terminalStatus) {
+      return NextResponse.json({
+        error: `이미 정산이 종결된 퇴원생입니다 (상태: ${terminalStatus.status}, ${terminalStatus.billing_month})`,
+      }, { status: 400 })
+    }
   }
   // parent_phone 만 보면 '아버님이 수신자'인 학생을 놓친다 — 어머니 번호가 비어 있으면 안내가
   // 아예 안 나가고(백종원 2026-08-11 실측), 둘 다 있으면 원장이 고른 수신자를 무시한다.

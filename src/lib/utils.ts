@@ -208,6 +208,12 @@ export function decodePaymentMemo(memo?: string | null): { cleanMemo: string | n
   return { cleanMemo: working || null, otherMethod: null }
 }
 
+/** 새 납부 메모 기본값용 — 결제선생 콜백이 붙인 [bill:…] 태그만 뺀다(2026-09-27). 태그는 결제선생 행 전용
+ *  (콜백 멱등·취소 판정)이라 수동 납부 행으로 복사되면 안 된다. 태그만 있던 메모면 빈 문자열. */
+export function stripBillTags(memo?: string | null): string {
+  return (memo ?? '').replace(/\[bill:[^\]]+\]\s*/g, '').trim()
+}
+
 // ─── Student Helpers ──────────────────────────────────────────────
 /** 활성 학생 필터링 — month를 넘기면 해당 월에 퇴원한 학생도 포함 (취소선 표시용). 등록월 이전은 제외 */
 // 구현은 @/types 로 이동 (2026-08-13) — 이 파일은 swr 을 최상단 import 해서 서버(API 라우트)가
@@ -249,4 +255,23 @@ export async function safeMutate<T>(url: string, method: string, body?: unknown)
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   })
+}
+
+// ─── 청구지연 판정 (2026-09-12 운영자님 지시: "날짜 지났는데 청구서 안 보낸 애들") ──────
+/** 납부탭 '청구지연' 필터의 단일 기준. 화면 필터와 일괄발송이 같은 판정을 봐야 해서 순수 함수로 뺀다. */
+export function isOverdueUnsent(opts: {
+  /** 결제일이 이미 지났는가 (isPaymentScheduled 의 반대. 과거 달은 항상 지난 것) */
+  duePassed: boolean
+  /** 이 달 청구서 상태 — 'unsent' 만 지연이다. 예약(scheduled)은 곧 나가고, 파기·취소는 의도적으로 없앤 것 */
+  billStatus: 'unsent' | 'sent' | 'paid' | 'cancelled' | 'destroyed' | 'scheduled'
+  /** 이 달 납부 기록이 있는가 — 다른 수단으로 이미 받았으면 청구가 밀린 게 아니다 */
+  hasPayments: boolean
+  /** 이 달 확정 요금 — 0원(면제)은 청구 대상이 아니다 */
+  fee: number
+}): boolean {
+  const { duePassed, billStatus, hasPayments, fee } = opts
+  if (!duePassed) return false
+  if (billStatus !== 'unsent') return false
+  if (hasPayments) return false
+  return fee > 0
 }

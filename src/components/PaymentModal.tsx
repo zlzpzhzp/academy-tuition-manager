@@ -4,13 +4,14 @@ import { toast } from 'sonner'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useAnimatedClose } from '@/lib/useAnimatedClose'
 import { createPortal } from 'react-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
+import { motion } from '@/components/paperMotion'
 import { X, Trash2, AlertTriangle, Check, Camera, ImagePlus, Loader2 } from 'lucide-react'
 import type { Payment, PaymentMethod } from '@/types'
 import { formatWon } from '@/lib/format'
 import { PAYMENT_METHOD_LABELS } from '@/types'
 import { METHOD_OPTIONS_SHORT } from '@/lib/constants'
-import { getTodayString } from '@/lib/utils'
+import { getTodayString, decodePaymentMemo, stripBillTags } from '@/lib/utils'
 import { compressImageToBlob } from '@/lib/compressImage'
 import AnimatedModal from '@/components/ui/AnimatedModal'
 
@@ -42,7 +43,9 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
   const [method, setMethod] = useState<PaymentMethod>(payment?.method as PaymentMethod ?? (prevMethod && prevMethod !== 'payssam' ? prevMethod : 'card'))
   const [paymentDate, setPaymentDate] = useState(payment?.payment_date ?? today)
   const [billingMonth, setBillingMonth] = useState(payment?.billing_month ?? defaultBillingMonth ?? currentMonth)
-  const [memo, setMemo] = useState(payment?.memo ?? prevMemo ?? '')
+  // 새 납부의 메모 기본값 = 지난달 메모에서 결제선생 [bill:…] 태그만 뺀 것(2026-09-27).
+  // 태그를 그대로 채우면 수동 납부(현금·카드) 행에 지난달 청구서 태그가 복사됐다(운영 9건 — 콜백·취소는 method=payssam·같은 달만 봐서 무해했지만 기록이 헷갈린다).
+  const [memo, setMemo] = useState(payment?.memo ?? stripBillTags(prevMemo))
   const [cashReceipt, setCashReceipt] = useState<'issued' | 'pending' | null>(payment?.cash_receipt ?? null)
   const [showConfirmDelete, setShowConfirmDelete] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
@@ -221,7 +224,7 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
                     disabled={uploading}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--orange-dim)] text-[var(--orange)] hover:opacity-80 disabled:opacity-50"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--orange-dim)] text-[var(--scheduled-text)] hover:opacity-80 disabled:opacity-50"
                     aria-label="영수증 업로드"
                   >
                     {uploading ? <Loader2 className="w-3 h-3 animate-spin" /> : <ImagePlus className="w-3 h-3" />}
@@ -305,21 +308,22 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
         </div>
 
         {/* 전달 비고 내용 알림 */}
-        {prevMemo && !payment && (
+        {/* 자동 반영되는 건 태그를 뺀 글자뿐이다 — 태그만 있던 메모면 반영할 게 없으니 알림도 없다(2026-09-27 verifier) */}
+        {stripBillTags(prevMemo) && !payment && (
           <div className="mx-5 mt-4 p-3 bg-[var(--orange-dim)] border border-[var(--orange)] rounded-lg flex gap-2">
-            <AlertTriangle className="w-4 h-4 text-[var(--orange)] shrink-0 mt-0.5" />
+            <AlertTriangle className="w-4 h-4 text-[var(--scheduled-text)] shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-medium text-[var(--orange)]">전달 비고 내용 (자동 반영)</p>
-              <p className="text-xs text-[var(--orange)] mt-0.5">{prevMemo}</p>
+              <p className="text-xs font-medium text-[var(--scheduled-text)]">전달 비고 내용 (자동 반영)</p>
+              <p className="text-xs text-[var(--scheduled-text)] mt-0.5">{stripBillTags(prevMemo)}</p>
             </div>
           </div>
         )}
         {prevMemo && payment && (
           <div className="mx-5 mt-4 p-3 bg-[var(--orange-dim)] border border-[var(--orange)] rounded-lg flex gap-2">
-            <AlertTriangle className="w-4 h-4 text-[var(--orange)] shrink-0 mt-0.5" />
+            <AlertTriangle className="w-4 h-4 text-[var(--scheduled-text)] shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-medium text-[var(--orange)]">전달 비고 내용</p>
-              <p className="text-xs text-[var(--orange)] mt-0.5">{prevMemo}</p>
+              <p className="text-xs font-medium text-[var(--scheduled-text)]">전달 비고 내용</p>
+              <p className="text-xs text-[var(--scheduled-text)] mt-0.5">{decodePaymentMemo(prevMemo).cleanMemo ?? '결제선생'}</p>
             </div>
           </div>
         )}
@@ -342,11 +346,11 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
                           key={val}
                           type="button"
                           onClick={() => setEditMethod(val)}
-                          whileTap={{ scale: 0.88 }}
+                          whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                           animate={editMethod === val ? { scale: [1, 1.08, 1] } : { scale: 1 }}
                           transition={{ duration: 0.25 }}
                           className={`px-2 py-1 rounded text-[11px] font-medium border whitespace-nowrap ${
-                            editMethod === val ? 'bg-[var(--blue)] text-white border-[var(--blue)]' : 'bg-[var(--bg-card)] text-[var(--text-3)] border-[var(--border)]'
+                            editMethod === val ? 'bg-[var(--blue)] text-[var(--on-action)] border-[var(--blue)]' : 'bg-[var(--bg-card)] text-[var(--text-3)] border-[var(--border)]'
                           }`}
                         >
                           {label}
@@ -354,7 +358,7 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
                       ))}
                     </div>
                     <motion.button
-                      whileTap={{ scale: 0.85 }}
+                      whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                       onClick={async () => {
                         if (onUpdate && payment.id && editMethod !== payment.method) {
                           await onUpdate(payment.id, { method: editMethod })
@@ -367,7 +371,7 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
                       <Check className="w-3.5 h-3.5" strokeWidth={3} />
                     </motion.button>
                     <motion.button
-                      whileTap={{ scale: 0.85 }}
+                      whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                       onClick={() => { setEditingMethod(false); setEditMethod(payment.method as PaymentMethod) }}
                       className="p-1 text-[var(--text-4)] hover:text-[var(--text-3)]"
                       aria-label="취소"
@@ -377,7 +381,7 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
                   </div>
                 ) : (
                   <motion.button
-                    whileTap={{ scale: 0.92 }}
+                    whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                     onClick={() => setEditingMethod(true)}
                     className="font-medium hover:text-[var(--blue)] hover:underline transition-colors"
                   >
@@ -404,7 +408,7 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
                       className="px-2 py-1 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--blue)]"
                     />
                     <motion.button
-                      whileTap={{ scale: 0.85 }}
+                      whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                       onClick={async () => {
                         if (onUpdate && payment.id) {
                           await onUpdate(payment.id, { payment_date: editDate })
@@ -417,7 +421,7 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
                       <Check className="w-3.5 h-3.5" strokeWidth={3} />
                     </motion.button>
                     <motion.button
-                      whileTap={{ scale: 0.85 }}
+                      whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                       onClick={() => { setEditingDate(false); setEditDate(payment.payment_date) }}
                       className="p-1 text-[var(--text-4)] hover:text-[var(--text-3)]"
                       aria-label="취소"
@@ -427,7 +431,7 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
                   </div>
                 ) : (
                   <motion.button
-                    whileTap={{ scale: 0.92 }}
+                    whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                     onClick={() => setEditingDate(true)}
                     className="font-medium hover:text-[var(--blue)] hover:underline transition-colors"
                   >
@@ -481,7 +485,7 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
             </div>
 
             <motion.button
-              whileTap={{ scale: 0.97 }}
+              whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
               disabled={showConfirmSuccess}
               onClick={async () => {
                 if (editMemo !== (payment.memo ?? '') && onUpdate && payment.id) {
@@ -505,13 +509,13 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
 
             {payment.method === 'payssam' ? (
               // 결제선생 자동수납 건은 개별 삭제 금지 — 결제 취소(환불) 플로우로만 처리 (2026-07-02 지시)
-              <div className="w-full py-2.5 bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-3)] rounded-lg text-sm flex items-center justify-center gap-2">
+              <div data-paper-card="" className="w-full py-2.5 bg-[var(--bg-card)] border border-[var(--border)] text-[var(--text-3)] rounded-lg text-sm flex items-center justify-center gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0" />
                 결제선생 건은 청구서 결제 취소로만 처리됩니다
               </div>
             ) : (
               <motion.button
-                whileTap={{ scale: 0.97 }}
+                whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                 onClick={() => setShowConfirmDelete(true)}
                 className="w-full py-2.5 bg-[var(--unpaid-bg)] border border-[var(--red-dim)] text-[var(--unpaid-text)] rounded-lg font-medium text-sm hover:opacity-80 flex items-center justify-center gap-2 transition-opacity"
               >
@@ -528,14 +532,14 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
             </div>
             <div className="flex gap-3">
               <motion.button
-                whileTap={{ scale: 0.97 }}
+                whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                 onClick={() => setShowConfirmDelete(false)}
                 className="flex-1 py-2.5 border border-[var(--border)] rounded-lg font-medium text-sm text-[var(--text-3)] hover:bg-[var(--bg-card-hover)]"
               >
                 돌아가기
               </motion.button>
               <motion.button
-                whileTap={{ scale: 0.97 }}
+                whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                 onClick={handleDelete}
                 className="flex-1 py-2.5 bg-[var(--unpaid-bg)] border border-[var(--red-dim)] text-[var(--unpaid-text)] rounded-lg font-medium text-sm hover:opacity-80 transition-opacity"
               >
@@ -556,9 +560,9 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
             {receiptSection}
             <motion.button
               type="button"
-              whileTap={{ scale: 0.97 }}
+              whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
               onClick={onClose}
-              className="w-full py-3 rounded-lg font-medium text-sm bg-[var(--blue)] text-white hover:opacity-90"
+              className="w-full py-3 rounded-lg font-medium text-sm bg-[var(--blue)] text-[var(--on-action)] hover:opacity-90"
             >
               닫기
             </motion.button>
@@ -598,11 +602,11 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
                     key={val}
                     type="button"
                     onClick={() => setMethod(val)}
-                    whileTap={{ scale: 0.9 }}
+                    whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                     animate={method === val ? { scale: [1, 1.1, 1] } : { scale: 1 }}
                     transition={{ duration: 0.25 }}
                     className={`py-2 rounded-lg text-xs font-medium border whitespace-nowrap ${
-                      method === val ? 'bg-[var(--blue)] text-white border-[var(--blue)]' : 'bg-[var(--bg-card)] text-[var(--text-3)] border-[var(--border)] hover:bg-[var(--bg-card-hover)]'
+                      method === val ? 'bg-[var(--blue)] text-[var(--on-action)] border-[var(--blue)]' : 'bg-[var(--bg-card)] text-[var(--text-3)] border-[var(--border)] hover:bg-[var(--bg-card-hover)]'
                     }`}
                   >
                     {label}
@@ -618,7 +622,7 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
                   <motion.button
                     type="button"
                     onClick={() => setCashReceipt('issued')}
-                    whileTap={{ scale: 0.95 }}
+                    whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                     animate={cashReceipt === 'issued' ? { scale: [1, 1.05, 1] } : { scale: 1 }}
                     transition={{ duration: 0.25 }}
                     className={`flex-1 py-2 rounded-lg text-sm font-medium border ${
@@ -630,7 +634,7 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
                   <motion.button
                     type="button"
                     onClick={() => setCashReceipt('pending')}
-                    whileTap={{ scale: 0.95 }}
+                    whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                     animate={cashReceipt === 'pending' ? { scale: [1, 1.05, 1] } : { scale: 1 }}
                     transition={{ duration: 0.25 }}
                     className={`flex-1 py-2 rounded-lg text-sm font-medium border ${
@@ -666,12 +670,12 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
 
             <motion.button
               type="submit"
-              whileTap={{ scale: 0.97 }}
+              whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
               disabled={showSuccess || submitting}
               className={`w-full py-3 rounded-lg font-medium text-sm transition-all duration-500 flex items-center justify-center gap-2 ${
                 showSuccess
                   ? 'bg-[var(--paid-bg)] border border-[var(--paid-text)] text-[var(--paid-text)] scale-105'
-                  : 'bg-[var(--blue)] text-white hover:opacity-90 disabled:opacity-60'
+                  : 'bg-[var(--blue)] text-[var(--on-action)] hover:opacity-90 disabled:opacity-60'
               }`}
             >
               {showSuccess ? (
@@ -694,12 +698,12 @@ export default function PaymentModal({ payment, studentId, defaultBillingMonth, 
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.15 }}
-              className="fixed inset-0 bg-black/90 z-[60] flex items-center justify-center"
+              className="fixed inset-0 bg-[var(--media-overlay)] z-[60] flex items-center justify-center"
               onClick={() => setViewImage(null)}
             >
               <button
                 onClick={e => { e.stopPropagation(); setViewImage(null) }}
-                className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 text-white rounded-full"
+                className="absolute top-4 right-4 p-2 bg-[var(--media-control)] hover:bg-[var(--media-control-hover)] text-[var(--on-media)] rounded-full"
                 aria-label="닫기"
               >
                 <X className="w-5 h-5" />

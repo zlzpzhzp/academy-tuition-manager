@@ -104,8 +104,8 @@ async function verifyFinanceToken(token: string): Promise<boolean> {
 }
 
 // Cookie 헤더에서 같은 이름 값을 전부 추출. request.cookies.get()은 중복 시 하나만 반환하는데,
-// 그게 남의(서명 불일치) 토큰이면 인증이 깨진다(2026-07-14 워라 dm_session 사고 계열).
-// 원비는 미들웨어(마지막)와 라우트 가드(첫번째)가 서로 다른 쿠키를 집어 '페이지는 열리는데 API 401'이
+// 그게 남의(서명 불일치) 토큰이면 인증이 깨진다(2026-07-14 자매 앱 세션 쿠키 사고 계열).
+// 이 앱은 미들웨어(마지막)와 라우트 가드(첫번째)가 서로 다른 쿠키를 집어 '페이지는 열리는데 API 401'이
 // 재현됐다(2026-07-21). 후보 전부 검증해 하나라도 유효하면 통과하는 관용 파싱으로 방어. (Edge 호환 인라인)
 function cookieCandidates(cookieHeader: string, name: string): string[] {
   const out: string[] = []

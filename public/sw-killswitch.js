@@ -1,7 +1,7 @@
 // 🔴 긴급용 킬스위치 서비스워커 — **평소엔 배포되지 않는다.**
 //
 // 언제 쓰나: 앱이 로고/스플래시에서 안 넘어간다는 신고가 올 때(진입 freeze).
-//   SW 는 그 증상의 1순위 용의자다. 2026-08-01 쌤 앱이 정확히 이 증상으로 막혔다.
+//   SW 는 그 증상의 1순위 용의자다. 2026-08-01 강사 앱이 정확히 이 증상으로 막혔다.
 //
 // ⚠️ 함정 — **등록 코드만 지우면 이미 설치된 폰은 안 풀린다.**
 //   ServiceWorkerRegistration.tsx 에서 register() 를 지워도 그건 '앞으로 등록 안 함'일 뿐이고,
@@ -10,10 +10,10 @@
 //
 // ✅ 진짜 롤백 = **이 파일을 public/sw.js 로 덮어쓰고 배포**하는 것.
 //   브라우저가 새 sw.js 를 받아가면서 스스로를 unregister 한다 → 앱 재실행 1회로 자가 해제.
-//   쌤이 이 방식으로 복구했고, 갇힌 폰이 실제로 풀린 것이 확인됐다.
+//   강사 앱이 이 방식으로 복구했고, 갇힌 폰이 실제로 풀린 것이 확인됐다.
 //
 // 실행 절차:
-//   cd /root/tuition-manager
+//   cd <프로젝트 디렉터리>
 //   cp public/sw-killswitch.js public/sw.js
 //   bash scripts/deploy.sh          # 검증 게이트 통과 후 배포
 //   # 그 뒤 ServiceWorkerRegistration.tsx 의 register 도 unregister 로 바꿔 재발 방지

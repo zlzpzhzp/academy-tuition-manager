@@ -110,12 +110,21 @@ export async function POST(request: NextRequest) {
     const isRegularBill = (b: { is_regular_tuition: boolean | null; bill_type: string | null }) =>
       b.is_regular_tuition !== false && (b.bill_type ?? 'regular') === 'regular'
 
-    const { data: monthBills } = await supabase
+    const { data: monthBills, error: monthBillsErr } = await supabase
       .from('tuition_bill_history')
       .select('bill_id, amount, status, is_regular_tuition, bill_type, phone, billing_month')
       .eq('student_id', studentId)
       .eq('billing_month', billingMonth)
       .in('status', ['paid', 'sent'])
+
+    if (monthBillsErr) {
+      console.error('[PaySsam resettle] 당월 청구서 조회 실패 — 정산 중단:', monthBillsErr)
+      return NextResponse.json({
+        error: '당월 청구서 조회에 실패해 중단했습니다 (잘못된 정산 방지). 잠시 후 다시 시도하세요.',
+        code: 'GUARD_QUERY_FAILED',
+        detail: monthBillsErr.message,
+      }, { status: 500 })
+    }
 
     let paidBill = (monthBills ?? []).filter(b => b.status === 'paid').find(isRegularBill)
     const unpaidBills = (monthBills ?? []).filter(b => b.status === 'sent' && isRegularBill(b))
@@ -123,13 +132,15 @@ export async function POST(request: NextRequest) {
     // 폴백: 보고 있는 달에 정규 청구서가 '아예 없을' 때만 가장 최근 결제완료 정규분으로 정산.
     // 결제일이 월 후반(예: 23일)이면 다음 달 청구 전에 퇴원하는 케이스 (2026-07-16 공유)
     // 미납분이 있으면 폴백하지 않는다 — 위 (b) 미납형으로 간다.
+    // ⚠️ 2026-09-05 astra 병합 검수: 조건을 `monthBills.length === 0`(청구서 전무)로 좁힌 제안은 되돌렸다 —
+    //    당월에 특강·선택과목 청구서만 있는 학생(실측 6쌍)의 정산이 404로 막힌다. 조회 오류는 위 GUARD 가 잡는다.
     if (!paidBill && unpaidBills.length === 0) {
       // 월 하한 = 직전 달. 없으면 몇 달 묵은 완납분(예: 6·7월 미납인 학생의 5월분)이 환불 대상이 되어
       // 이미 수강을 마친 과거 달 결제가 취소된다. 정산액은 현재 요금 기준이라 금액도 어긋난다. (검수 P1)
       const [y, m] = billingMonth.split('-').map(Number)
       const prevD = new Date(y, m - 2, 1) // m-1이 당월 index → m-2가 직전 달
       const minMonth = `${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, '0')}`
-      const { data: recentBills } = await supabase
+      const { data: recentBills, error: recentBillsErr } = await supabase
         .from('tuition_bill_history')
         .select('bill_id, amount, status, is_regular_tuition, bill_type, phone, billing_month')
         .eq('student_id', studentId)
@@ -138,6 +149,15 @@ export async function POST(request: NextRequest) {
         .lte('billing_month', billingMonth)
         .order('billing_month', { ascending: false })
         .limit(5)
+      if (recentBillsErr) {
+        console.error('[PaySsam resettle] 최근 청구서 조회 실패 — 정산 중단:', recentBillsErr)
+        return NextResponse.json({
+          error: '최근 청구서 조회에 실패해 중단했습니다 (잘못된 정산 방지). 잠시 후 다시 시도하세요.',
+          code: 'GUARD_QUERY_FAILED',
+          detail: recentBillsErr.message,
+        }, { status: 500 })
+      }
+
       paidBill = (recentBills ?? []).find(isRegularBill)
     }
     if (!paidBill && unpaidBills.length === 0) {
@@ -293,13 +313,34 @@ export async function POST(request: NextRequest) {
     }
 
     // 4) 정산분 청구서 발송 (supersedes = 기존 완납분 bill_id). 기존 결제는 아직 취소하지 않음.
-    const sendResult = await sendBill({
-      studentName,
-      phone: cleanPhone,
-      amount: resumedAmount,
-      productName: resolvedProductName,
-      message: resolvedMessage,
-    }) as { code?: string; msg?: string; bill_id?: string; shortURL?: string }
+    let sendResult: { code?: string; msg?: string; bill_id?: string; shortURL?: string }
+    try {
+      sendResult = await sendBill({
+        studentName,
+        phone: cleanPhone,
+        amount: resumedAmount,
+        productName: resolvedProductName,
+        message: resolvedMessage,
+      })
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : String(error)
+      if (mode === 'unpaid' && destroyedUnpaid.length > 0) {
+        // 미납형은 이미 미납분을 파기한 뒤다 — '발송 여부 불명확' 과 '지금 살아있는 청구서가 없다' 두 사실을 다 남긴다.
+        // (2026-07-26 감사 안전장치 = destroyedBillIds 응답 + 감사로그. 9/7 코드 검수: 불명확 분기가 이걸 삼키던 회귀 차단)
+        await writeAuditLog('payment', studentId, 'update',
+          `⚠️ 중도퇴원 정산(미납형) 발송 결과 불명확: ${studentName ?? ''} ${effectiveMonth} — 미납분 ${destroyedUnpaid.join(', ')} 파기 완료, 정산분은 결제선생 응답 없음. 결제선생에서 실발송 여부 확인 후 수동 처리(미발송이면 재청구 필요).`,
+          { destroyed: destroyedUnpaid, resumedAmount, error: errMsg })
+        return NextResponse.json({
+          code: 'SEND_RESULT_UNKNOWN',
+          error: '미납 청구서는 파기됐으나 정산분 발송 응답을 받지 못했습니다. 결제선생에서 발송 여부를 확인한 뒤(미발송이면 재청구) 처리하세요.',
+          destroyedBillIds: destroyedUnpaid,
+        }, { status: 502 })
+      }
+      await writeAuditLog('payment', studentId, 'update',
+        `⚠️ 발송 결과 불명확: ${effectiveMonth} [resettle] — 결제선생에서 실발송 여부 확인 후 수동 처리`,
+        { error: errMsg })
+      return NextResponse.json({ code: 'SEND_RESULT_UNKNOWN', error: '결제선생 응답을 받지 못했습니다. 결제선생에서 발송 여부를 확인한 뒤 다시 시도하세요.' }, { status: 502 })
+    }
 
     if (sendResult.code !== '0000') {
       if (mode === 'unpaid') {

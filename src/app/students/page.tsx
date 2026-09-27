@@ -93,7 +93,7 @@ export default function StudentsPage() {
       </div>
       <div className="space-y-3">
         {[...Array(3)].map((_, gi) => (
-          <div key={gi} className="bg-[var(--bg-card)] rounded-xl border overflow-hidden">
+          <div data-paper-card="" key={gi} className="bg-[var(--bg-card)] rounded-xl border overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-3">
               <div className="w-5 h-5 skeleton-shimmer rounded"></div>
               <div className="h-4 skeleton-shimmer rounded w-24 flex-1"></div>
@@ -137,7 +137,7 @@ export default function StudentsPage() {
         </div>
         <TButton
           onClick={() => handleAddStudent()}
-          className="px-4 py-2 bg-[var(--blue)] text-white rounded-lg text-sm font-medium flex items-center gap-1 hover:opacity-90"
+          className="px-4 py-2 bg-[var(--blue)] text-[var(--on-action)] rounded-lg text-sm font-medium flex items-center gap-1 hover:opacity-90"
         >
           <Plus className="w-4 h-4" /> 학생 등록
         </TButton>
@@ -148,7 +148,7 @@ export default function StudentsPage() {
       ) : (
         <div className="space-y-3">
           {grades.map(grade => (
-            <div key={grade.id} className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] overflow-hidden">
+            <div data-paper-card="" key={grade.id} className="bg-[var(--bg-card)] rounded-xl border border-[var(--border)] overflow-hidden">
               <TButton
                 onClick={() => toggleGrade(grade.id)}
                 className="w-full flex items-center gap-2 px-4 py-3 text-left"

@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import type { PaymentMethod } from '@/types'
 import { METHOD_OPTIONS_SHORT } from '@/lib/constants'
 import { TButton } from '@/components/motion'
+import { usePaperReducedMotion } from '@/components/paperMotion'
 
 interface Props {
   currentMethod: PaymentMethod
@@ -14,8 +15,9 @@ interface Props {
 }
 
 export default function MethodPickerPopup({ currentMethod, onMethodChange, onClose, anchorRef }: Props) {
+  const reduced = usePaperReducedMotion()
   const [pos, setPos] = useState({ top: 0, left: 0 })
-  const [show, setShow] = useState(false)
+  const [show, setShow] = useState(reduced)
 
   useEffect(() => {
     if (anchorRef.current) {
@@ -27,8 +29,10 @@ export default function MethodPickerPopup({ currentMethod, onMethodChange, onClo
       if (left + 60 > window.innerWidth) left = window.innerWidth - 68
       setPos({ top, left })
     }
-    requestAnimationFrame(() => setShow(true))
-  }, [anchorRef])
+    if (reduced) { setShow(true); return }
+    const frame = requestAnimationFrame(() => setShow(true))
+    return () => cancelAnimationFrame(frame)
+  }, [anchorRef, reduced])
 
   return createPortal(
     <div data-picker-portal>
@@ -48,7 +52,7 @@ export default function MethodPickerPopup({ currentMethod, onMethodChange, onClo
             aria-selected={currentMethod === val}
             className={`px-2.5 py-0.5 rounded-full text-xs font-medium whitespace-nowrap shadow-md transition-all ${
               currentMethod === val
-                ? 'bg-[var(--blue)] text-white'
+                ? 'bg-[var(--blue)] text-[var(--on-action)]'
                 : 'bg-[var(--bg-card)] text-[var(--text-3)] hover:text-[var(--text-1)] hover:bg-[var(--bg-card-hover)] border border-[var(--border)]'
             }`}
             style={{

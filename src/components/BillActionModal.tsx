@@ -300,8 +300,8 @@ export default function BillActionModal({ studentId, studentName, phone, billId,
       onClose={() => { if (state !== 'submitting') onClose() }}
       closeOnBackdrop={state !== 'submitting'}
     >
-      <div className="bg-[var(--bg-card)] w-full rounded-2xl">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-[var(--bg-card)] z-10">
+      <div data-paper-card="" className="bg-[var(--bg-card)] w-full rounded-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-[var(--bg-card)] z-10 rounded-t-[inherit]">
           <h2 className="text-lg font-bold tracking-tight">
             {state === 'configuring-split' ? '분할결제 설정' : (state === 'composing-sms' || state === 'confirming-sms') ? '미납 안내 문자' : '청구서 관리'}
           </h2>
@@ -334,7 +334,7 @@ export default function BillActionModal({ studentId, studentName, phone, billId,
               <div className="pt-2 mt-2 border-t border-[var(--border)] space-y-1.5">
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-[var(--text-3)]">분할 청구</span>
-                  <span className="text-sm font-bold text-[var(--orange)]">{splitInfo.count}건</span>
+                  <span className="text-sm font-bold text-[var(--scheduled-text)]">{splitInfo.count}건</span>
                 </div>
                 <div className="flex flex-col gap-1">
                   {splitInfo.amounts.map((amt, i) => {
@@ -351,7 +351,7 @@ export default function BillActionModal({ studentId, studentName, phone, billId,
                               <Send className="w-3 h-3" style={{ transform: 'rotate(180deg)' }} />
                             </span>
                           ) : isSent ? (
-                            <span className="inline-flex items-center justify-center w-5 h-5 rounded-md" style={{ background: 'var(--orange-dim)', color: 'var(--orange)' }} title="발송됨 (미결제)">
+                            <span className="inline-flex items-center justify-center w-5 h-5 rounded-md" style={{ background: 'var(--orange-dim)', color: 'var(--scheduled-text)' }} title="발송됨 (미결제)">
                               <Mail className="w-3 h-3" />
                             </span>
                           ) : (
@@ -385,8 +385,8 @@ export default function BillActionModal({ studentId, studentName, phone, billId,
 
           {(state === 'confirming-destroy' || state === 'confirming-cancel' || state === 'confirming-reissue' || state === 'confirming-resend') && (
             <div className="flex items-start gap-2 p-3 bg-[var(--orange-dim)] rounded-xl">
-              <AlertTriangle className="w-4 h-4 text-[var(--orange)] shrink-0 mt-0.5" />
-              <p className="text-sm text-[var(--orange)]">
+              <AlertTriangle className="w-4 h-4 text-[var(--scheduled-text)] shrink-0 mt-0.5" />
+              <p className="text-sm text-[var(--scheduled-text)]">
                 {state === 'confirming-destroy'
                   ? <>청구서를 <strong>파기</strong>합니다. 학부모는 더이상 이 청구서로 결제할 수 없습니다.</>
                   : state === 'confirming-cancel'
@@ -401,8 +401,8 @@ export default function BillActionModal({ studentId, studentName, phone, billId,
           {state === 'confirming-sms' && (
             <div className="space-y-3">
               <div className="flex items-start gap-2 p-3 bg-[var(--orange-dim)] rounded-xl">
-                <AlertTriangle className="w-4 h-4 text-[var(--orange)] shrink-0 mt-0.5" />
-                <p className="text-sm text-[var(--orange)]">
+                <AlertTriangle className="w-4 h-4 text-[var(--scheduled-text)] shrink-0 mt-0.5" />
+                <p className="text-sm text-[var(--scheduled-text)]">
                   <strong>{studentName}</strong> 학부모(<strong>{phone}</strong>)에게 아래 본문 그대로 문자가 발송됩니다. 정말 보낼까요?
                 </p>
               </div>
@@ -424,7 +424,7 @@ export default function BillActionModal({ studentId, studentName, phone, billId,
                       onClick={() => setParts(n as 2 | 3 | 4)}
                       className={`w-10 h-9 rounded-lg text-sm font-bold transition-colors ${
                         parts === n
-                          ? 'bg-[var(--blue)] text-white'
+                          ? 'bg-[var(--blue)] text-[var(--on-action)]'
                           : 'bg-[var(--bg-elevated)] text-[var(--text-3)] hover:bg-[var(--border-light)]'
                       }`}
                     >
@@ -499,7 +499,7 @@ export default function BillActionModal({ studentId, studentName, phone, billId,
                       state === 'confirming-resend' ? 'resend' :
                       'reissue'
                     )}
-                    className="flex-1 py-3 rounded-xl text-sm font-bold text-white hover:opacity-90"
+                    className="flex-1 py-3 rounded-xl text-sm font-bold text-[var(--on-action)] hover:opacity-90"
                     style={{ background: (state === 'confirming-reissue' || state === 'confirming-resend') ? 'var(--blue)' : 'var(--red)' }}
                   >
                     확인, 진행합니다
@@ -516,7 +516,7 @@ export default function BillActionModal({ studentId, studentName, phone, billId,
                   <TButton
                     onClick={submitSplit}
                     disabled={!splitValid}
-                    className="flex-1 py-3 rounded-xl text-sm font-bold text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="flex-1 py-3 rounded-xl text-sm font-bold text-[var(--on-action)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
                     style={{ background: 'var(--blue)' }}
                   >
                     {parts}건 분할 결제
@@ -533,7 +533,7 @@ export default function BillActionModal({ studentId, studentName, phone, billId,
                   <TButton
                     onClick={() => setState('confirming-sms')}
                     disabled={!smsText.trim() || !phone}
-                    className="flex-1 py-3 rounded-xl text-sm font-bold text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                    className="flex-1 py-3 rounded-xl text-sm font-bold text-[var(--on-action)] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
                     style={{ background: 'var(--blue)' }}
                   >
                     문자 발송
@@ -549,14 +549,14 @@ export default function BillActionModal({ studentId, studentName, phone, billId,
                   </TButton>
                   <TButton
                     onClick={submitSms}
-                    className="flex-1 py-3 rounded-xl text-sm font-bold text-white hover:opacity-90"
+                    className="flex-1 py-3 rounded-xl text-sm font-bold text-[var(--on-action)] hover:opacity-90"
                     style={{ background: 'var(--blue)' }}
                   >
                     확인, 발송합니다
                   </TButton>
                 </div>
               ) : state === 'submitting' ? (
-                <TButton disabled className="py-3 rounded-xl text-sm font-bold bg-[var(--blue)] text-white opacity-70 flex items-center justify-center gap-2">
+                <TButton disabled className="py-3 rounded-xl text-sm font-bold bg-[var(--blue)] text-[var(--on-action)] opacity-70 flex items-center justify-center gap-2">
                   <Loader2 className="w-4 h-4 animate-spin" /> 처리 중...
                 </TButton>
               ) : (
@@ -565,7 +565,7 @@ export default function BillActionModal({ studentId, studentName, phone, billId,
                     <>
                       <TButton
                         onClick={() => setState('confirming-resend')}
-                        className="w-full py-3 rounded-xl text-sm font-bold bg-[var(--blue)] text-white hover:opacity-90 flex items-center justify-center gap-2"
+                        className="w-full py-3 rounded-xl text-sm font-bold bg-[var(--blue)] text-[var(--on-action)] hover:opacity-90 flex items-center justify-center gap-2"
                       >
                         <Bell className="w-4 h-4" />
                         재발송 (카톡 다시 보내기)

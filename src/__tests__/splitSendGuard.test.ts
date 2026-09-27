@@ -118,3 +118,22 @@ describe('split-send 이미납부 가드', () => {
     expect(sendBill).toHaveBeenCalledTimes(2) // 분할 2건
   })
 })
+
+it('주간 리뷰: 정규 교집합만 전건 발송 후 파기, 선택·특강 보호', async () => {
+  const bills = [
+    { bill_id: 'regular', is_regular_tuition: true, bill_type: 'regular', amount: 10 },
+    { bill_id: 'legacy', is_regular_tuition: null, bill_type: null, amount: 20 },
+    { bill_id: 'electives', is_regular_tuition: true, bill_type: 'electives', amount: 30 },
+    { bill_id: 'special', is_regular_tuition: false, bill_type: 'regular', amount: 40 },
+    { bill_id: 'special-null', is_regular_tuition: false, bill_type: null, amount: 50 },
+  ]
+  results.tuition_payments = [{ data: [], error: null }]
+  results.tuition_bill_history = [{ data: bills, error: null }]
+  sendBill.mockResolvedValue({ code: '0000', bill_id: 'new' })
+  destroyBill.mockReset().mockImplementation(async () => {
+    expect(sendBill).toHaveBeenCalledTimes(2)
+    return { code: '0000' }
+  })
+  expect((await POST(req(BODY))).status).toBe(200)
+  expect(destroyBill.mock.calls).toEqual([['regular', 10], ['legacy', 20]])
+})

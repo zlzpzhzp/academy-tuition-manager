@@ -29,11 +29,15 @@ export async function snapshotCurrentMonthFee(studentId: string): Promise<void> 
 
     let cls: Class | undefined
     if (student.class_id) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('tuition_classes')
         .select('id, monthly_fee')
         .eq('id', student.class_id)
         .single()
+      if (error) {
+        console.error('[feeSnapshot] 반 조회 실패:', studentId, error.message)
+        return
+      }
       cls = (data as Class) ?? undefined
     }
 

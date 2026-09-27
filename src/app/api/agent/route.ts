@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdminSession } from '@/lib/auth'
 import { GoogleGenerativeAI, SchemaType, Content, Part, type Tool } from '@google/generative-ai'
+import { withGeminiModel } from '@/lib/geminiModel'
 import { toolDefinitions, executeTool } from '@/lib/agentTools'
 import { getTodayString } from '@/lib/date'
 
@@ -88,17 +89,23 @@ export async function POST(req: Request) {
 
     const genAI = new GoogleGenerativeAI(apiKey)
     const geminiTools = getGeminiTools()
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+    const buildModel = (modelName: string) => genAI.getGenerativeModel({
+      model: modelName,
       systemInstruction: SYSTEM_PROMPT
         .replace(/{current_date}/g, currentDate)
         .replace(/{current_month}/g, currentMonth),
       tools: geminiTools,
     }, {
-      // 서버 US IP 지역차단 대응 — 로컬 Vertex 프록시 경유 (2026-07-10 amnesia a2a).
-      // .env.local에만 설정(GEMINI_BASE_URL=http://127.0.0.1:8091), Vercel(icn1)은 미설정=직행.
+      // 서버 US IP 지역차단 대응 — 로컬 Vertex 프록시 경유 (2026-07-10).
+      // .env.local에만 설정(GEMINI_BASE_URL=http://127.0.0.1:<프록시 포트>), Vercel(icn1)은 미설정=직행.
       ...(process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : {}),
     })
+
+    // 모델 폴백(2026-09-12 2.5 종료 대응) — 툴 루프 전체를 한 번에 감싼다.
+    // 모델 사용 불가는 첫 호출에서 나므로 재시도는 처음부터 깨끗하게 다시 돈다.
+    // 에이전트 툴은 **조회 전용**(agentTools 에 쓰기 없음 + 시스템 프롬프트가 변경 금지)이라 재실행이 안전하다.
+    return await withGeminiModel(async (modelName) => {
+    const model = buildModel(modelName)
 
     // Convert to Gemini Content format
     const contents: Content[] = messages.map(m => ({
@@ -154,6 +161,7 @@ export async function POST(req: Request) {
     return NextResponse.json({
       error: '조회가 8회를 초과해 답변을 완성하지 못했습니다. 질문을 더 좁혀서 다시 시도해주세요.',
       actions: toolResults,
+    })
     })
   } catch (error: unknown) {
     const errMsg = error instanceof Error ? error.message : String(error)

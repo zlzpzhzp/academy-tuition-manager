@@ -1,9 +1,9 @@
 'use client'
 
-import { useCallback, useMemo, useState, useEffect } from 'react'
+import { memo, useCallback, useMemo, useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { Users, CreditCard, AlertCircle, TrendingUp, ClipboardCheck, Megaphone, CheckCircle2, Clock, Info, X, RefreshCw, Sparkles, UserMinus, RotateCcw } from 'lucide-react'
+import { Users, CreditCard, AlertCircle, TrendingUp, BarChart3, ClipboardCheck, Megaphone, CheckCircle2, Clock, Info, X, RefreshCw, Sparkles, UserMinus, RotateCcw } from 'lucide-react'
 import { AnimatePresence } from 'framer-motion'
 import { toast } from 'sonner'
 import useSWR from 'swr'
@@ -12,9 +12,10 @@ import type { Payment, GradeWithClasses, Teacher, Student, Class } from '@/types
 import { getStudentFee, getPaymentStatus, calcRefund, getLastClassDate } from '@/types'
 import { getPaymentDueDay, isPaymentScheduled, getActiveStudents, getCurrentMonth, formatMonth, useGrades, usePayments, useTeachers, getPrevMonth, revalidateGrades, revalidatePayments, swrFetcher } from '@/lib/utils'
 import { formatWon, formatNumber, formatClassName } from '@/lib/format'
-import { usePullToRefresh } from '@/lib/usePullToRefresh'
+import { usePullToRefresh, type PullFrame } from '@/lib/usePullToRefresh'
 import { DashboardSkeleton } from '@/components/Skeleton'
-import { motion } from 'framer-motion'
+import StatsMiniCard from '@/components/stats/StatsMiniCard'
+import { motion } from '@/components/paperMotion'
 import { FadeInUp, StaggerContainer, StaggerItem, AnimatedNumber, TButton } from '@/components/motion'
 
 type DashStudent = Student & { class: Class; gradeName: string; gradeIndex: number; classIndex: number }
@@ -28,6 +29,10 @@ function ChevronRightSmall() {
 }
 
 const ONBOARDING_KEY = 'tuition_dashboard_onboarded_v1'
+
+// SWR 결과가 없을 때의 **고정** 빈 배열 (2026-09-27 동작품질 배치2 #3). `= []` 는 렌더마다 새 배열이라
+// 거기에 기댄 memo(요약 통계 등)가 매 렌더 다시 계산됐다. 얼려 두어 제자리 변경은 바로 드러나게.
+const EMPTY: never[] = Object.freeze([]) as unknown as never[]
 
 export default function DashboardPage() {
   const router = useRouter()
@@ -44,12 +49,12 @@ export default function DashboardPage() {
 
   const currentMonth = getCurrentMonth()
   const prevMonth = getPrevMonth(currentMonth)
-  const { data: grades = [], error: gradesError, isLoading: gradesLoading } = useGrades<GradeWithClasses[]>()
-  const { data: payments = [], error: paymentsError, isLoading: paymentsLoading } = usePayments<Payment[]>(currentMonth)
-  const { data: prevPayments = [] } = usePayments<Payment[]>(prevMonth)
-  const { data: teachers = [] } = useTeachers<Teacher[]>()
+  const { data: grades = EMPTY, error: gradesError, isLoading: gradesLoading } = useGrades<GradeWithClasses[]>()
+  const { data: payments = EMPTY, error: paymentsError, isLoading: paymentsLoading } = usePayments<Payment[]>(currentMonth)
+  const { data: prevPayments = EMPTY } = usePayments<Payment[]>(prevMonth)
+  const { data: teachers = EMPTY } = useTeachers<Teacher[]>()
   // 5월 청구서 상태 — 퇴원생 row에 결제처리 상태 표시용
-  const { data: bills = [], isLoading: billsLoading } = useSWR<{ student_id: string; status: string; is_regular_tuition?: boolean }[]>(
+  const { data: bills = EMPTY, isLoading: billsLoading } = useSWR<{ student_id: string; status: string; is_regular_tuition?: boolean }[]>(
     `/api/billing?month=${currentMonth}`,
     swrFetcher,
   )
@@ -62,7 +67,7 @@ export default function DashboardPage() {
   useEffect(() => {
     setWarnSince(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
   }, [])
-  const { data: warnLogs = [] } = useSWR<{ id: string }[]>(
+  const { data: warnLogs = EMPTY } = useSWR<{ id: string }[]>(
     warnSince ? `/api/audit-logs?warnOnly=1&limit=100&since=${warnSince}` : null,
     swrFetcher,
   )
@@ -127,7 +132,6 @@ export default function DashboardPage() {
     const totalStudents = allStudents.length
     const totalFee = allStudents.reduce((sum, s) => sum + getStudentFee(s, s.class), 0)
     const totalPaid = payments.reduce((sum, p) => sum + p.amount, 0)
-    const prevTotalPaid = prevPayments.reduce((sum, p) => sum + p.amount, 0)
     const unpaidStudents = allStudents.filter(s => {
       const fee = getStudentFee(s, s.class)
       const paid = paidByStudentId.get(s.id) ?? 0
@@ -142,17 +146,34 @@ export default function DashboardPage() {
     const withdrawnStudents = withdrawnThisMonth
     const paidCount = totalStudents - unpaidStudents.length
     const paymentRate = totalStudents > 0 ? Math.round((paidCount / totalStudents) * 100) : 0
-    // 지난달 대비 수납액 증감 (만원 단위, 토스/copilot 트렌드 패턴)
-    const paidDeltaMan = Math.round((totalPaid - prevTotalPaid) / 10000)
-    return { totalStudents, totalFee, totalPaid, prevTotalPaid, paidDeltaMan, unpaidStudents, overdueStudents, scheduledStudents, newStudents, withdrawnStudents, paidCount, paymentRate }
-  }, [allStudents, withdrawnThisMonth, payments, prevPayments, currentMonth, paidByStudentId])
+    return { totalStudents, totalFee, totalPaid, unpaidStudents, overdueStudents, scheduledStudents, newStudents, withdrawnStudents, paidCount, paymentRate }
+  }, [allStudents, withdrawnThisMonth, payments, currentMonth, paidByStudentId])
+  // 지난달 대비 수납액 증감 (만원 단위, 토스/copilot 트렌드 패턴). 지난달 납부는 늦게 올 수 있어 위 통계와 분리 —
+  // 도착해도 미납·예정 목록(아래 memo 구획)의 입력이 바뀌지 않게 (#3).
+  const prevTotalPaid = useMemo(() => prevPayments.reduce((sum, p) => sum + p.amount, 0), [prevPayments])
+  const paidDeltaMan = Math.round((stats.totalPaid - prevTotalPaid) / 10000)
 
   // Pull-to-refresh — SWR 캐시 강제 새로고침 (billing의 인라인 로직을 hook으로 추출)
-  const { containerRef, pullDistance, isRefreshing } = usePullToRefresh({
+  // 2026-09-26 C07: touchmove 마다 setState(페이지 전체 재렌더)하던 것을 rAF 안의 DOM 직접 쓰기로.
+  // 컨테이너 translate·전환·인디케이터 투명도/회전 공식은 예전 JSX 와 같다.
+  const pullIconWrapRef = useRef<HTMLDivElement>(null)
+  const pullIconRef = useRef<SVGSVGElement>(null)
+  const onPull = useCallback((distance: number, { container, refreshing }: PullFrame) => {
+    container.style.transform = `translateY(${distance}px)`
+    container.style.transition = distance === 0 ? 'transform 0.25s cubic-bezier(0.22,1,0.36,1)' : 'none'
+    const wrap = pullIconWrapRef.current
+    if (wrap) {
+      wrap.style.display = distance > 8 || refreshing ? '' : 'none'
+      wrap.style.opacity = String(Math.min(1, distance / 60))
+    }
+    if (pullIconRef.current) pullIconRef.current.style.transform = `rotate(${distance * 4}deg)`
+  }, [])
+  const { containerRef, isRefreshing } = usePullToRefresh({
     onRefresh: async () => {
       await Promise.all([revalidateGrades(), revalidatePayments(currentMonth)])
     },
     disabled: loading,
+    onPull,
   })
 
   // 퇴원 row 환불 칩 토글: 환불 필요 ↔ 결제취소(red)/환불완료(green)
@@ -202,13 +223,11 @@ export default function DashboardPage() {
   )
 
   return (
-    <div ref={containerRef} className="space-y-5" style={{ transform: `translateY(${pullDistance}px)`, transition: pullDistance === 0 ? 'transform 0.25s cubic-bezier(0.22,1,0.36,1)' : 'none' }}>
-      {/* Pull-to-refresh 인디케이터 */}
-      {(pullDistance > 8 || isRefreshing) && (
-        <div className="absolute left-1/2 -translate-x-1/2 -top-12 flex items-center justify-center pointer-events-none" style={{ opacity: Math.min(1, pullDistance / 60) }}>
-          <RefreshCw className={`w-5 h-5 text-[var(--text-3)] ${isRefreshing ? 'animate-spin' : ''}`} style={{ transform: `rotate(${pullDistance * 4}deg)` }} />
-        </div>
-      )}
+    <div ref={containerRef} className="space-y-5" style={{ transform: 'translateY(0px)', transition: 'transform 0.25s cubic-bezier(0.22,1,0.36,1)' }}>
+      {/* Pull-to-refresh 인디케이터 — 표시·투명도·회전은 onPull 이 DOM 에 직접 쓴다 */}
+      <div ref={pullIconWrapRef} className="absolute left-1/2 -translate-x-1/2 -top-12 flex items-center justify-center pointer-events-none" style={{ display: isRefreshing ? undefined : 'none', opacity: 0 }}>
+        <RefreshCw ref={pullIconRef} className={`w-5 h-5 text-[var(--text-3)] ${isRefreshing ? 'animate-spin' : ''}`} style={{ transform: 'rotate(0deg)' }} />
+      </div>
       <div className="flex items-start justify-between">
         <div>
           {(() => {
@@ -233,6 +252,13 @@ export default function DashboardPage() {
             <Megaphone className="w-5 h-5" />
           </Link>
           <Link
+            href="/stats"
+            aria-label="매출 추이"
+            className="p-2.5 rounded-xl text-[var(--text-4)] hover:text-[var(--text-1)] hover:bg-[var(--bg-card-hover)] transition-colors"
+          >
+            <BarChart3 className="w-5 h-5" />
+          </Link>
+          <Link
             href="/attendance"
             aria-label="출결"
             className="p-2.5 rounded-xl text-[var(--text-4)] hover:text-[var(--text-1)] hover:bg-[var(--bg-card-hover)] transition-colors"
@@ -248,7 +274,7 @@ export default function DashboardPage() {
               className="relative p-2.5 rounded-xl text-[var(--unpaid-text)] bg-[var(--red-dim)] hover:opacity-90 transition-opacity"
             >
               <AlertCircle className="w-5 h-5" />
-              <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--unpaid-text)] text-[10px] font-bold text-white flex items-center justify-center tabular-nums">
+              <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[var(--unpaid-text)] text-[10px] font-bold text-[var(--on-action)] flex items-center justify-center tabular-nums">
                 {warnCount > 99 ? '99+' : warnCount}
               </span>
             </Link>
@@ -320,9 +346,9 @@ export default function DashboardPage() {
             <p className="text-[28px] font-extrabold text-[var(--text-1)] leading-none tracking-tight"><AnimatedNumber value={Math.round(stats.totalPaid / 10000)} /><span className="text-[14px] font-medium text-[var(--text-4)] ml-0.5">만원</span></p>
             <div className="flex items-center gap-1.5 mt-1">
               <p className="text-[13px] text-[var(--text-4)]">/ {(stats.totalFee / 10000).toFixed(0)}만원</p>
-              {stats.prevTotalPaid > 0 && stats.paidDeltaMan !== 0 && (
-                <span className={`text-[11px] font-bold tabular-nums ${stats.paidDeltaMan > 0 ? 'text-[var(--paid-text)]' : 'text-[var(--unpaid-text)]'}`}>
-                  {stats.paidDeltaMan > 0 ? '↑' : '↓'} {Math.abs(stats.paidDeltaMan).toLocaleString()}만
+              {prevTotalPaid > 0 && paidDeltaMan !== 0 && (
+                <span className={`text-[11px] font-bold tabular-nums ${paidDeltaMan > 0 ? 'text-[var(--paid-text)]' : 'text-[var(--unpaid-text)]'}`}>
+                  {paidDeltaMan > 0 ? '↑' : '↓'} {Math.abs(paidDeltaMan).toLocaleString()}만
                 </span>
               )}
             </div>
@@ -350,10 +376,10 @@ export default function DashboardPage() {
         {stats.newStudents.length > 0 && (
           <motion.div
             key="new-students"
-            initial={{ opacity: 0, y: 6, scale: 0.98 }}
+            initial={{ opacity: 0, y: 10, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -6, scale: 0.98 }}
-            transition={{ type: 'spring', stiffness: 280, damping: 28, delay: 0.15 }}
+            exit={{ opacity: 0, y: -8, scale: 0.98 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
             className="card overflow-hidden"
           >
             <div className="flex items-center gap-2 px-4 pt-4 pb-2">
@@ -377,14 +403,14 @@ export default function DashboardPage() {
               const memoColor = s.memo_color
               const memoCls = memoColor === 'green' ? 'bg-[var(--paid-bg)] text-[var(--paid-text)] px-1.5 py-0.5 rounded'
                 : memoColor === 'red' ? 'bg-[var(--unpaid-bg)] text-[var(--unpaid-text)] px-1.5 py-0.5 rounded'
-                : memoColor === 'yellow' ? 'bg-[var(--orange-dim)] text-[var(--orange)] px-1.5 py-0.5 rounded'
+                : memoColor === 'yellow' ? 'bg-[var(--orange-dim)] text-[var(--scheduled-text)] px-1.5 py-0.5 rounded'
                 : ''
               return (
                 <motion.div
                   key={s.id}
-                  initial={{ opacity: 0, x: -6 }}
+                  initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: Math.min(idx * 0.025, 0.18), duration: 0.2 }}
+                  transition={{ delay: (idx < 8 ? idx * 0.025 : 0), duration: 0.2 }}
                 >
                   <Link href={`/students/${s.id}`} className="block hover:bg-[var(--bg-card-hover)] active:bg-[var(--bg-elevated)] transition-colors">
                     <div className="flex items-center gap-2 px-4 py-1.5">
@@ -432,10 +458,10 @@ export default function DashboardPage() {
         {stats.withdrawnStudents.length > 0 && (
           <motion.div
             key="withdrawn-students"
-            initial={{ opacity: 0, y: 6, scale: 0.98 }}
+            initial={{ opacity: 0, y: 10, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -6, scale: 0.98 }}
-            transition={{ type: 'spring', stiffness: 280, damping: 28, delay: 0.18 }}
+            exit={{ opacity: 0, y: -8, scale: 0.98 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1], delay: 0.18 }}
             className="card overflow-hidden"
           >
             <div className="flex items-center gap-2 px-4 pt-4 pb-2">
@@ -453,7 +479,7 @@ export default function DashboardPage() {
               const memo = s.memo?.trim()
               const memoColor = s.memo_color
               const chipCls = memoColor === 'red' ? 'bg-[var(--unpaid-bg)] text-[var(--unpaid-text)]'
-                : memoColor === 'yellow' ? 'bg-[var(--orange-dim)] text-[var(--orange)]'
+                : memoColor === 'yellow' ? 'bg-[var(--orange-dim)] text-[var(--scheduled-text)]'
                 : memoColor === 'green' ? 'bg-[var(--paid-bg)] text-[var(--paid-text)]'
                 : 'bg-[var(--bg-elevated)] text-[var(--text-3)]'
               const isRefundChip = memoColor === 'red' || memoColor === 'yellow' || memoColor === 'green'
@@ -475,9 +501,9 @@ export default function DashboardPage() {
               return (
                 <motion.div
                   key={s.id}
-                  initial={{ opacity: 0, x: -6 }}
+                  initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: Math.min(idx * 0.025, 0.18), duration: 0.2 }}
+                  transition={{ delay: (idx < 8 ? idx * 0.025 : 0), duration: 0.2 }}
                   className="block hover:bg-[var(--bg-card-hover)] active:bg-[var(--bg-elevated)] transition-colors cursor-pointer"
                   onClick={() => router.push(`/students/${s.id}`)}
                 >
@@ -561,7 +587,7 @@ export default function DashboardPage() {
                       }
                       if (billStatus === 'sent') {
                         return (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[var(--orange-dim)] text-[var(--orange)] shrink-0">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-[var(--orange-dim)] text-[var(--scheduled-text)] shrink-0">
                             <Clock className="w-3 h-3" strokeWidth={2.5} />
                             미결제
                           </span>
@@ -582,19 +608,45 @@ export default function DashboardPage() {
         )}
       </AnimatePresence>
 
+      {/* 미납·예정·선생님별·반별·학년별 구획은 memo — 늦게 오는 데이터(선생님 목록·경고 수·지난달 납부)가
+          도착할 때 수십 개 행을 다시 렌더하지 않는다 (2026-09-27 동작품질 배치2 #3). 모양·순서 그대로. */}
+      <OverdueSection students={stats.overdueStudents} currentMonth={currentMonth} paidByStudentId={paidByStudentId} />
+
+      <ScheduledSection students={stats.scheduledStudents} currentMonth={currentMonth} paidByStudentId={paidByStudentId} />
+
+      {/* 월별 매출 추이 — 자기 데이터는 카드 안에서 따로 로드(대시보드 skeleton 지연 금지) */}
+      <FadeInUp delay={0.24}>
+        <StatsMiniCard />
+      </FadeInUp>
+
+      <TeacherSalesSection teachers={teachers} grades={grades} currentMonth={currentMonth} paidByStudentId={paidByStudentId} />
+
+      <ClassCountSection grades={grades} currentMonth={currentMonth} />
+
+      <GradeFeeSection grades={grades} currentMonth={currentMonth} paidByStudentId={paidByStudentId} />
+    </div>
+  )
+}
+
+type PaidMap = Map<string, number>
+
+const OverdueSection = memo(function OverdueSection({ students, currentMonth, paidByStudentId }: { students: DashStudent[]; currentMonth: string; paidByStudentId: PaidMap }) {
+  const getStudentPaid = (studentId: string) => paidByStudentId.get(studentId) ?? 0
+  return (
+    <>
       {/* 미납 — 학년별 그룹화 (75명+ 끝없이 나열되던 문제 보완. spring-health Action Required 패턴) */}
       <FadeInUp delay={0.2} className="card p-5">
         <div className="flex items-center gap-2 mb-4">
           <h2 className="text-[17px] font-bold text-[var(--text-1)]">미납</h2>
-          {stats.overdueStudents.length > 0 && <span className="text-[13px] font-bold text-[var(--red)]">{stats.overdueStudents.length}</span>}
+          {students.length > 0 && <span className="text-[13px] font-bold text-[var(--red)]">{students.length}</span>}
         </div>
-        {stats.overdueStudents.length === 0 ? (
+        {students.length === 0 ? (
           <EmptyState icon={CheckCircle2} title="미납 학생이 없습니다" description="이번 달은 모두 납부 완료됐어요" />
         ) : (
           (() => {
             // 학년별로 그룹: gradeName 단위 묶음 + 카운트 헤더
             const groups = new Map<string, DashStudent[]>()
-            for (const s of stats.overdueStudents) {
+            for (const s of students) {
               const key = s.gradeName
               if (!groups.has(key)) groups.set(key, [])
               groups.get(key)!.push(s)
@@ -605,9 +657,9 @@ export default function DashboardPage() {
                 {Array.from(groups.entries()).map(([gradeName, group], gi) => (
                   <motion.div
                     key={gradeName}
-                    initial={{ opacity: 0, y: 6 }}
+                    initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: Math.min(gi * 0.04, 0.2), duration: 0.25 }}
+                    transition={{ delay: (gi < 8 ? gi * 0.04 : 0), duration: 0.25 }}
                   >
                     <div className="flex items-center gap-2 mb-1.5 px-1">
                       <span className="text-[12px] font-bold text-[var(--text-3)] tracking-tight">{gradeName}</span>
@@ -621,9 +673,9 @@ export default function DashboardPage() {
                         return (
                           <motion.div
                             key={s.id}
-                            initial={{ opacity: 0, x: -6 }}
+                            initial={{ opacity: 0, x: -8 }}
                             animate={{ opacity: 1, x: 0 }}
-                            transition={{ delay: Math.min(idx * 0.02, 0.15), duration: 0.22 }}
+                            transition={{ delay: (idx < 8 ? idx * 0.02 : 0), duration: 0.22 }}
                           >
                             <Link href={`/students/${s.id}`}
                               className="flex items-center gap-3 py-1.5 border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-card-hover)] -mx-2 px-2 rounded-xl transition-colors">
@@ -651,16 +703,23 @@ export default function DashboardPage() {
           })()
         )}
       </FadeInUp>
+    </>
+  )
+})
 
+const ScheduledSection = memo(function ScheduledSection({ students, currentMonth, paidByStudentId }: { students: DashStudent[]; currentMonth: string; paidByStudentId: PaidMap }) {
+  const getStudentPaid = (studentId: string) => paidByStudentId.get(studentId) ?? 0
+  return (
+    <>
       {/* 예정 */}
-      {stats.scheduledStudents.length > 0 && (
+      {students.length > 0 && (
         <FadeInUp delay={0.22} className="card p-5">
           <div className="flex items-center gap-2 mb-4">
             <h2 className="text-[17px] font-bold text-[var(--text-1)]">예정</h2>
-            <span className="text-[13px] font-bold text-[var(--orange)]">{stats.scheduledStudents.length}</span>
+            <span className="text-[13px] font-bold text-[var(--scheduled-text)]">{students.length}</span>
           </div>
           <div className="space-y-0">
-            {stats.scheduledStudents.map((s, idx) => {
+            {students.map((s, idx) => {
               const fee = getStudentFee(s, s.class)
               const paid = getStudentPaid(s.id)
               const dueDay = getPaymentDueDay(s)
@@ -670,7 +729,7 @@ export default function DashboardPage() {
                   key={s.id}
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ type: 'spring', stiffness: 400, damping: 28, delay: Math.min(idx * 0.03, 0.3) }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 28, delay: (idx < 8 ? idx * 0.03 : 0) }}
                 >
                   <Link href={`/students/${s.id}`}
                     className="flex items-center gap-3 py-1.5 border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-card-hover)] -mx-2 px-2 rounded-xl transition-colors">
@@ -693,7 +752,14 @@ export default function DashboardPage() {
           </div>
         </FadeInUp>
       )}
+    </>
+  )
+})
 
+const TeacherSalesSection = memo(function TeacherSalesSection({ teachers, grades, currentMonth, paidByStudentId }: { teachers: Teacher[]; grades: GradeWithClasses[]; currentMonth: string; paidByStudentId: PaidMap }) {
+  const getStudentPaid = (studentId: string) => paidByStudentId.get(studentId) ?? 0
+  return (
+    <>
       {/* 선생님별 매출 */}
       {teachers.length > 0 && grades.length > 0 && (() => {
         const teacherStats = teachers.map(teacher => {
@@ -736,7 +802,13 @@ export default function DashboardPage() {
           </FadeInUp>
         )
       })()}
+    </>
+  )
+})
 
+const ClassCountSection = memo(function ClassCountSection({ grades, currentMonth }: { grades: GradeWithClasses[]; currentMonth: string }) {
+  return (
+    <>
       {/* 반별 인원수 */}
       {grades.length > 0 && (() => {
         const classData = grades.flatMap(g =>
@@ -769,11 +841,14 @@ export default function DashboardPage() {
                     <div className="text-[13px] text-[var(--text-2)] font-semibold leading-tight truncate">{c.name}</div>
                   </div>
                   <div className="flex-1 h-8 bg-[var(--bg-card-hover)] rounded-xl overflow-hidden relative">
+                    {/* 막대는 너비(width) 대신 transform 으로 채운다(#3) — 너비 스프링(약 1.5초)은 매 프레임 문서 전체 레이아웃을
+                        일으켜 로드 직후 스크롤이 끊겼다. 트랙 너비의 막대를 왼쪽으로 (100-비율)% 밀어 두고 트랙이 잘라 보인다:
+                        오른쪽 끝의 궤적·둥근 끝·스프링·지연·값 변화 애니메이션이 예전과 같다. */}
                     <motion.div
-                      className="h-full rounded-xl"
-                      initial={{ width: 0 }}
-                      animate={{ width: `${Math.max((c.count / maxCount) * 100, 10)}%` }}
-                      transition={{ type: 'spring', stiffness: 80, damping: 20, delay: i * 0.05 }}
+                      className="h-full w-full rounded-xl"
+                      initial={{ x: '-100%' }}
+                      animate={{ x: `${Math.max((c.count / maxCount) * 100, 10) - 100}%` }}
+                      transition={{ type: 'spring', stiffness: 80, damping: 20, delay: i < 8 ? i * 0.05 : 0 }}
                       style={{ background: subjectColor(c.subject) }}
                     />
                     <span className="absolute inset-y-0 right-3 flex items-center text-[13px] font-bold text-[var(--text-3)]">{c.count}</span>
@@ -784,7 +859,14 @@ export default function DashboardPage() {
           </FadeInUp>
         )
       })()}
+    </>
+  )
+})
 
+const GradeFeeSection = memo(function GradeFeeSection({ grades, currentMonth, paidByStudentId }: { grades: GradeWithClasses[]; currentMonth: string; paidByStudentId: PaidMap }) {
+  const getStudentPaid = (studentId: string) => paidByStudentId.get(studentId) ?? 0
+  return (
+    <>
       {/* 학년별 총액 */}
       {grades.length > 0 && (() => {
         // 합계는 '표시된 행들의 합' — stats.totalFee(퇴원생 제외)와 분모가 달라
@@ -825,6 +907,6 @@ export default function DashboardPage() {
         </FadeInUp>
         )
       })()}
-    </div>
+    </>
   )
-}
+})

@@ -13,10 +13,23 @@ const updates: { table: string; row: Record<string, unknown> }[] = []
 
 function makeBuilder(table: string) {
   const b: Record<string, unknown> = {}
-  const result = () => results[table]?.shift() ?? { data: null, error: null }
-  for (const m of ['select', 'eq', 'lte', 'limit']) b[m] = () => b
+  let mutation = false
+  let id: unknown
+  const result = () => {
+    if (mutation && table === 'tuition_bill_queue') {
+      if (id === undefined) return { data: [], error: null } // 복구할 고착 행 없음
+      updates.push({ table, row: values })
+      return { data: [{ id }], error: null }
+    }
+    return results[table]?.shift() ?? { data: null, error: null }
+  }
+  let values: Record<string, unknown> = {}
+  for (const m of ['select', 'lte', 'limit']) b[m] = () => b
+  b.eq = (key: string, value: unknown) => { if (key === 'id') id = value; return b }
   b.update = (row: Record<string, unknown>) => {
-    updates.push({ table, row })
+    mutation = true
+    values = row
+    if (table !== 'tuition_bill_queue') updates.push({ table, row })
     return b
   }
   b.single = async () => result()
@@ -90,4 +103,31 @@ describe('processOverdueDestroys', () => {
     expect(updates.some(u => u.table === HISTORY && u.row.status === 'destroyed')).toBe(true)
     expect(updates.some(u => u.table === QUEUE && u.row.status === 'sent')).toBe(true)
   })
+
+  it('대상 조회 장애면 취소하지 않고 재시도 (#7)', async () => {
+    results[QUEUE] = [{ data: [{ id: 'q1', payload: { billId: 'B1', amount: 300 }, retry_count: 0 }], error: null }]
+    results[HISTORY] = [{ data: null, error: { code: '08006', message: 'DB down' } }]
+    expect(await processOverdueDestroys()).toBe(0)
+    expect(destroyBill).not.toHaveBeenCalled()
+    expect(updates).toEqual([
+      { table: QUEUE, row: expect.objectContaining({ status: 'processing' }) },
+      { table: QUEUE, row: expect.objectContaining({ status: 'pending', retry_count: 1 }) },
+    ])
+  })
+
+  it.each([
+    { data: null, error: { code: 'PGRST116', message: 'no rows' } },
+    { data: null, error: null },
+    { data: { status: 'paid' }, error: null },
+  ])('실제 부재·상태 변동이면 기존대로 취소: %j', async result => {
+    results[QUEUE] = [{ data: [{ id: 'q1', payload: { billId: 'B1', amount: 300 }, retry_count: 0 }], error: null }]
+    results[HISTORY] = [result]
+    await processOverdueDestroys()
+    expect(destroyBill).not.toHaveBeenCalled()
+    expect(updates).toEqual([
+      { table: QUEUE, row: expect.objectContaining({ status: 'processing' }) },
+      { table: QUEUE, row: expect.objectContaining({ status: 'cancelled' }) },
+    ])
+  })
+
 })

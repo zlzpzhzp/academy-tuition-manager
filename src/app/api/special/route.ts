@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
   if (groupIds.length > 0) {
     const { data: memberRows, error: e5 } = await supabase
       .from('tuition_special_group_member')
-      .select('group_id, order_index, student:tuition_students(id, name, phone, parent_phone, parent_father_phone, payssam_recipient, withdrawal_date, batch_exclude_month)')
+      .select('group_id, order_index, student:tuition_students(id, name, phone, parent_phone, parent_father_phone, payssam_recipient, withdrawal_date, enrollment_date, batch_exclude_month)')
       .in('group_id', groupIds)
       .order('order_index', { ascending: true })
     if (e5) return NextResponse.json({ error: e5.message }, { status: 500 })

@@ -40,10 +40,18 @@ describe('student360 헬퍼', () => {
     expect(qaNameCandidates(null, [])).toEqual([])
   })
 
-  it('isAmbiguousName — 같은 이름에 학부모번호 2종 이상이면 동명이인', () => {
-    expect(isAmbiguousName(['010-1', '010-1', null])).toBe(false)
+  it('isAmbiguousName — 번호가 다르거나 여러 행 중 번호 누락이면 동명이인', () => {
+    expect(isAmbiguousName(['010-1', '010-1', null])).toBe(true)
     expect(isAmbiguousName(['010-1', '010-2'])).toBe(true)
-    expect(isAmbiguousName([null, ''])).toBe(false)
+    expect(isAmbiguousName(['010-1', '010-1'])).toBe(false)
+    expect(isAmbiguousName(['010-1', undefined])).toBe(true)
+    expect(isAmbiguousName(['010-1', '  '])).toBe(true)
+    expect(isAmbiguousName([null])).toBe(false)
+    expect(isAmbiguousName([undefined])).toBe(false)
+    expect(isAmbiguousName([''])).toBe(false)
+    expect(isAmbiguousName(['010-1'])).toBe(false)
+    expect(isAmbiguousName([])).toBe(false)
+    expect(isAmbiguousName([null, ''])).toBe(true)
   })
 
   it('formatProgressItem — 교재+표기, 폴백 p./번', () => {

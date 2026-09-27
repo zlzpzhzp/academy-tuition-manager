@@ -15,7 +15,7 @@ const upserts: { table: string; rows: unknown }[] = []
 function makeBuilder(table: string) {
   const b: Record<string, unknown> = {}
   const result = () => results[table]?.shift() ?? { data: null, error: null }
-  for (const m of ['select', 'eq', 'is', 'order', 'limit']) {
+  for (const m of ['select', 'eq', 'is', 'order', 'limit', 'single']) {
     b[m] = () => b
   }
   b.upsert = (rows: unknown) => {
@@ -30,6 +30,7 @@ vi.mock('@/lib/supabase', () => ({ supabase: { from: (t: string) => makeBuilder(
 vi.mock('@/lib/auth', () => ({ requireCronSecret: vi.fn(() => null) }))
 
 import { GET } from '@/app/api/cron/fee-snapshot/route'
+import { snapshotCurrentMonthFee } from '@/lib/feeSnapshot'
 
 const REQ = {} as NextRequest
 const STUDENTS = [
@@ -74,5 +75,28 @@ describe('fee-snapshot cron', () => {
     const rows = upserts[0].rows as { student_id: string; fee: number }[]
     expect(rows.find(r => r.student_id === 's1')!.fee).toBe(650000) // 45만 + 확통 20만
     expect(rows.find(r => r.student_id === 's2')!.fee).toBe(300000) // custom_fee 우선
+  })
+})
+
+
+describe('당월 스냅샷 갱신 (#5)', () => {
+  it('반 조회 오류면 기존 스냅샷 보존(upsert 없음)', async () => {
+    results['tuition_students'] = [{ data: STUDENTS[0], error: null }]
+    results['tuition_classes'] = [{ data: null, error: { message: 'DB down' } }]
+    await snapshotCurrentMonthFee('s1')
+    expect(upserts).toHaveLength(0)
+  })
+
+  it('정상 반 조회는 선택과목비까지 그대로 저장', async () => {
+    results['tuition_students'] = [{ data: STUDENTS[0], error: null }]
+    results['tuition_classes'] = [{ data: { id: 'c1', monthly_fee: 450000 }, error: null }]
+    await snapshotCurrentMonthFee('s1')
+    expect(upserts).toEqual([{ table: 'tuition_fee_snapshot', rows: expect.objectContaining({ student_id: 's1', fee: 650000 }) }])
+  })
+
+  it('반 없는 학생은 정상적으로 개별 요금 저장', async () => {
+    results['tuition_students'] = [{ data: { ...STUDENTS[1], class_id: null }, error: null }]
+    await snapshotCurrentMonthFee('s2')
+    expect(upserts).toEqual([{ table: 'tuition_fee_snapshot', rows: expect.objectContaining({ student_id: 's2', fee: 300000 }) }])
   })
 })

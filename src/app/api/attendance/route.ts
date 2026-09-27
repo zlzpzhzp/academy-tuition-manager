@@ -67,6 +67,8 @@ export async function POST(request: Request) {
   }
   const payload = [...withNote, ...withoutNote]
 
+  // entity_id 는 uuid 가 아니라 text 다(라이브 실측 2026-08-31 — 'bulk-날짜' 로그 3건 실존).
+  // OSS 판 스키마 역산이 uuid 로 잘못 추정해 '원본 버그'로 보고했던 이력 있음 — 원본은 정상.
   await writeAuditLog(
     'attendance',
     `bulk-${payload[0].date}`,

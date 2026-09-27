@@ -193,7 +193,13 @@ export default function KioskPage() {
   const [actionType, setActionType] = useState<Action | null>(null)
   const [cheerText, setCheerText] = useState('')
   const [clockText, setClockText] = useState('')
+  const [confirmNotice, setConfirmNotice] = useState('')
   const resetRef = useRef<NodeJS.Timeout | null>(null)
+  // '오늘 수업일 아님' 안내를 띄운 코드·동작 — 같은 코드로 같은 버튼을 한 번 더 누르면 확인으로 본다
+  const confirmTokenRef = useRef<{ code: string; action: Action; expiresAt: number } | null>(null)
+  // 같은 키 연타 바운스 차단 — 태블릿 키가 한 번에 두 번 먹으면 뒷자리가 밀려 남의 코드가 된다
+  // (1596 을 누르다 9 가 두 번 먹으면 1599 = 실존하는 다른 학생. 2026-09-09 운영자님 지시)
+  const lastDigitRef = useRef<{ digit: string; at: number } | null>(null)
 
   // 화면 절전 방지
   useEffect(() => {
@@ -260,7 +266,8 @@ export default function KioskPage() {
 
   const reset = useCallback(() => {
     submitSeqRef.current++ // 남아있는 응답 무효화
-    setCode(''); setMode('input'); setMessage(''); setStudentName(''); setActionType(null)
+    confirmTokenRef.current = null
+    setCode(''); setMode('input'); setMessage(''); setStudentName(''); setActionType(null); setConfirmNotice('')
   }, [])
 
   // 성공/에러 후 자동 리셋. 학생 이름 응답이 오기 전엔 리셋 타이머 시작 안 함(이름 보여줄 시간 확보).
@@ -269,10 +276,16 @@ export default function KioskPage() {
     if (mode === 'success' && studentName) resetRef.current = setTimeout(reset, 1100)
     // 이름이 안 오는 경우(응답 지연·유실)에도 상한을 걸어 무조건 입력 화면 복귀 —
     // 안 걸면 키오스크가 성공 화면에 고착돼 다음 학생이 못 찍는다 (2026-08-13 라인리뷰)
-    else if (mode === 'success') resetRef.current = setTimeout(reset, 6000)
+    // 🔴 상한은 fetch 타임아웃(8s)보다 길어야 한다. 6s 였을 때는 응답이 느리면 리셋이 먼저 돌아
+    // submitSeqRef 가 올라가고, 뒤늦게 온 '수업일 아님' 되묻기가 통째로 버려졌다 —
+    // 그 경로는 **아직 아무것도 기록되지 않은** 상태라 학생은 찍은 줄 알고 출결이 비었다.
+    // (2026-09-10 코드 검수 지적)
+    else if (mode === 'success') resetRef.current = setTimeout(reset, 9000)
     else if (mode === 'error') resetRef.current = setTimeout(reset, 2500)
+    // 안내 표시부터 8초. 효과 실행이 늦어져도 토큰의 만료 시각에 맞춰 정리한다.
+    else if (mode === 'input' && confirmNotice) resetRef.current = setTimeout(reset, Math.max(0, (confirmTokenRef.current?.expiresAt ?? Date.now()) - Date.now()))
     return () => { if (resetRef.current) clearTimeout(resetRef.current) }
-  }, [mode, studentName, reset])
+  }, [mode, studentName, confirmNotice, reset])
 
   const onPad = useCallback((digit: string) => {
     // 결과 화면(success/error)에서 키패드 누르면 즉시 리셋 + 다음 학생 입력 시작
@@ -285,6 +298,17 @@ export default function KioskPage() {
       return
     }
     if (mode !== 'input') return
+    // 같은 키가 아주 짧은 간격으로 두 번 들어오면(하드웨어·터치 바운스) 두 번째는 버린다.
+    // 사람이 같은 숫자를 연속으로 누르는 건 이보다 훨씬 느리다(실측 기준 200ms+).
+    if (digit !== '←') {
+      const now = Date.now()
+      const last = lastDigitRef.current
+      if (last && last.digit === digit && now - last.at < 90) return
+      lastDigitRef.current = { digit, at: now }
+    }
+    // 코드가 바뀌면 직전 확인 안내는 무효 — 새 코드로 다시 판정받아야 한다
+    confirmTokenRef.current = null
+    setConfirmNotice('')
     // 길이 체크를 functional updater 안에서 — 빠른 연타 시 stale closure로 4자리 초과 입력되는 것 방지
     if (digit === '←') setCode(c => c.slice(0, -1))
     else setCode(c => (c.length < 4 ? c + digit : c))
@@ -294,6 +318,11 @@ export default function KioskPage() {
     if (code.length !== 4 || mode !== 'input') return
     // 더블탭 가드 — mode state는 같은 프레임 내 재탭에서 stale이라 시간 기반으로 차단 (M2)
     const now = Date.now()
+    // 백그라운드 탭 등에서 타이머가 늦게 실행돼도 만료 토큰을 전송하지 않는다.
+    if (confirmTokenRef.current && now >= confirmTokenRef.current.expiresAt) {
+      reset()
+      return
+    }
     if (now - lastSubmitAtRef.current < 600) return
     lastSubmitAtRef.current = now
     const seq = ++submitSeqRef.current
@@ -308,23 +337,35 @@ export default function KioskPage() {
       const res = await fetch('/api/attendance/check-in', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, action }),
+        body: JSON.stringify({
+          code,
+          action,
+          // 안내를 보고 같은 코드·같은 버튼을 다시 누른 경우에만 확인으로 보낸다
+          confirm: confirmTokenRef.current?.code === code && confirmTokenRef.current?.action === action,
+        }),
         signal: AbortSignal.timeout(8000),
       })
       const data = await res.json()
       if (seq !== submitSeqRef.current) return // 이미 다음 학생 입력으로 넘어감 — 화면 덮지 않기 (M2)
       if (!res.ok) {
         setMode('error'); setMessage(data.error || '처리 실패')
+      } else if (data.needsConfirm) {
+        // 수업일이 아닌 학생 — 아직 아무것도 기록·발송되지 않았다. 입력 화면으로 되돌리고 한 번 더 확인받는다
+        confirmTokenRef.current = { code, action, expiresAt: Date.now() + 8000 }
+        setMode('input'); setStudentName(''); setActionType(null)
+        setConfirmNotice(data.message || '오늘 수업일이 아닙니다. 맞으면 한 번 더 눌러주세요')
       } else if (!data.ok) {
         setMode('error'); setStudentName(data.student?.name ?? ''); setMessage(data.message || '이미 처리됨')
       } else {
+        confirmTokenRef.current = null
+        setConfirmNotice('')
         setStudentName(data.student.name)
       }
     } catch (e) {
       if (seq !== submitSeqRef.current) return
       setMode('error'); setMessage(e instanceof Error ? e.message : '네트워크 오류')
     }
-  }, [code, mode])
+  }, [code, mode, reset])
 
   // 외부 키보드 지원
   useEffect(() => {
@@ -532,9 +573,21 @@ export default function KioskPage() {
                   </motion.button>
                 </div>
 
-                <p className="text-center text-[12px]" style={{ color: C.text4 }}>
-                  처리 시 학부모님께 카카오 알림톡이 발송됩니다
-                </p>
+                {confirmNotice ? (
+                  <motion.p
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="text-center text-[15px] font-bold rounded-2xl px-4 py-3"
+                    style={{ color: C.gold, background: C.goldDim, border: `1px solid ${C.goldBorder}` }}
+                    role="status"
+                  >
+                    {confirmNotice}
+                  </motion.p>
+                ) : (
+                  <p className="text-center text-[12px]" style={{ color: C.text4 }}>
+                    처리 시 학부모님께 카카오 알림톡이 발송됩니다
+                  </p>
+                )}
               </section>
             </motion.div>
           )}

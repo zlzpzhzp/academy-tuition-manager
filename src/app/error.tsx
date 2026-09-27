@@ -29,7 +29,7 @@ export default function Error({
         <div className="flex gap-2 mt-6">
           <button
             onClick={reset}
-            className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl bg-[var(--blue)] text-white font-bold hover:opacity-90 transition-opacity"
+            className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl bg-[var(--blue)] text-[var(--on-action)] font-bold hover:opacity-90 transition-opacity"
           >
             <RefreshCw className="w-4 h-4" /> 다시 시도
           </button>

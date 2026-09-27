@@ -108,14 +108,14 @@ export default function AgentPage() {
       <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-1">
         {messages.length === 0 && (
           <div className="text-center py-12">
-            <Bot className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-            <p className="text-gray-400 text-sm mb-6">자연어로 원비관리 작업을 처리할 수 있어요</p>
+            <Bot className="w-12 h-12 text-[var(--text-4)] mx-auto mb-3" />
+            <p className="text-[var(--text-3)] text-sm mb-6">자연어로 원비관리 작업을 처리할 수 있어요</p>
             <div className="space-y-2 max-w-sm mx-auto">
               {EXAMPLES.map((ex, i) => (
                 <button
                   key={i}
                   onClick={() => sendMessage(ex)}
-                  className="w-full text-left px-4 py-2.5 bg-white rounded-xl border text-sm text-gray-600 hover:border-[var(--blue)] hover:text-[var(--blue)] transition-colors"
+                  className="w-full text-left px-4 py-2.5 bg-[var(--bg-card)] rounded-xl border text-sm text-[var(--text-2)] hover:border-[var(--blue)] hover:text-[var(--blue)] transition-colors"
                 >
                   &ldquo;{ex}&rdquo;
                 </button>
@@ -128,14 +128,14 @@ export default function AgentPage() {
           <div key={i} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
             {msg.role === 'assistant' && (
               <div className="w-7 h-7 rounded-full bg-[var(--blue)] flex items-center justify-center flex-shrink-0 mt-1">
-                <Bot className="w-4 h-4 text-white" />
+                <Bot className="w-4 h-4 text-[var(--on-action)]" />
               </div>
             )}
             <div className={`max-w-[85%] ${msg.role === 'user' ? 'order-first' : ''}`}>
-              <div
+              <div data-paper-card=""
                 className={`px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${
                   msg.role === 'user'
-                    ? 'bg-[var(--blue)] text-white rounded-br-md'
+                    ? 'bg-[var(--blue)] text-[var(--on-action)] rounded-br-md'
                     : msg.error
                     ? 'bg-[var(--unpaid-bg)] text-[var(--unpaid-text)] border border-[var(--red-dim)] rounded-bl-md'
                     : 'bg-[var(--bg-card)] border border-[var(--border)] rounded-bl-md'
@@ -149,10 +149,10 @@ export default function AgentPage() {
               {msg.actions && msg.actions.length > 0 && (
                 <div className="mt-1.5 space-y-1">
                   {msg.actions.map((action, j) => (
-                    <div key={j} className="bg-gray-50 rounded-lg border text-xs overflow-hidden">
+                    <div key={j} className="bg-[var(--bg-card-hover)] rounded-lg border text-xs overflow-hidden">
                       <button
                         onClick={() => toggleAction(i * 100 + j)}
-                        className="w-full flex items-center gap-1.5 px-3 py-1.5 hover:bg-gray-100 text-gray-500"
+                        className="w-full flex items-center gap-1.5 px-3 py-1.5 hover:bg-[var(--bg-elevated)] text-[var(--text-3)]"
                       >
                         {expandedActions.has(i * 100 + j)
                           ? <ChevronDown className="w-3 h-3" />
@@ -161,7 +161,7 @@ export default function AgentPage() {
                         <span>{TOOL_LABELS[action.tool] ?? action.tool}</span>
                       </button>
                       {expandedActions.has(i * 100 + j) && (
-                        <div className="px-3 py-2 border-t bg-white text-gray-600 max-h-48 overflow-y-auto">
+                        <div className="px-3 py-2 border-t bg-[var(--bg-card)] text-[var(--text-2)] max-h-48 overflow-y-auto">
                           <pre className="whitespace-pre-wrap break-all">
                             {JSON.stringify(action.result, null, 2)}
                           </pre>
@@ -173,8 +173,8 @@ export default function AgentPage() {
               )}
             </div>
             {msg.role === 'user' && (
-              <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0 mt-1">
-                <User className="w-4 h-4 text-gray-600" />
+              <div className="w-7 h-7 rounded-full bg-[var(--bg-elevated)] flex items-center justify-center flex-shrink-0 mt-1">
+                <User className="w-4 h-4 text-[var(--text-2)]" />
               </div>
             )}
           </div>
@@ -183,10 +183,10 @@ export default function AgentPage() {
         {loading && (
           <div className="flex gap-2">
             <div className="w-7 h-7 rounded-full bg-[var(--blue)] flex items-center justify-center flex-shrink-0">
-              <Bot className="w-4 h-4 text-white" />
+              <Bot className="w-4 h-4 text-[var(--on-action)]" />
             </div>
-            <div className="px-4 py-2.5 bg-white border rounded-2xl rounded-bl-md">
-              <Loader2 className="w-4 h-4 text-gray-400 animate-spin" />
+            <div data-paper-card="" className="px-4 py-2.5 bg-[var(--bg-card)] border rounded-2xl rounded-bl-md">
+              <Loader2 className="w-4 h-4 text-[var(--text-3)] animate-spin" />
             </div>
           </div>
         )}
@@ -204,13 +204,13 @@ export default function AgentPage() {
           onKeyDown={e => e.key === 'Enter' && !e.nativeEvent.isComposing && sendMessage()}
           placeholder="명령을 입력하세요..."
           disabled={loading}
-          className="flex-1 min-w-0 px-4 py-3 bg-white border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--blue)] disabled:opacity-50"
+          className="flex-1 min-w-0 px-4 py-3 bg-[var(--bg-card)] border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-[var(--blue)] disabled:opacity-50"
           autoFocus
         />
         <button
           onClick={() => sendMessage()}
           disabled={loading || !input.trim()}
-          className="px-4 py-3 bg-[var(--blue)] text-white rounded-xl hover:opacity-90 disabled:opacity-50 transition-opacity"
+          className="px-4 py-3 bg-[var(--blue)] text-[var(--on-action)] rounded-xl hover:opacity-90 disabled:opacity-50 transition-opacity"
         >
           <Send className="w-4 h-4" />
         </button>

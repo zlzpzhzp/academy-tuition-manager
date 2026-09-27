@@ -1,6 +1,7 @@
 'use client'
 
-import { AnimatePresence, motion, useDragControls, type PanInfo } from 'framer-motion'
+import { AnimatePresence, useDragControls, type PanInfo } from 'framer-motion'
+import { motion } from '@/components/paperMotion'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -164,8 +165,8 @@ export default function AnimatedModal({
   }
   const smMaxW = SM_MAX_W[maxWidth] ?? 'sm:max-w-md'
   const panelSheetClass = expanded
-    ? `w-full ${smMaxW} sm:rounded-2xl sm:max-h-[88vh] h-[100dvh] sm:h-auto flex flex-col bg-[var(--bg-card)]`
-    : `w-full ${smMaxW} sm:rounded-2xl rounded-t-2xl max-h-[88vh] flex flex-col bg-[var(--bg-card)]`
+    ? `w-full ${smMaxW} sm:rounded-2xl sm:max-h-[88vh] h-[100dvh] sm:h-auto flex flex-col bg-[var(--bg-card)] overflow-hidden`
+    : `w-full ${smMaxW} sm:rounded-2xl rounded-t-2xl max-h-[88vh] flex flex-col bg-[var(--bg-card)] overflow-hidden`
 
   const panelClass = fullscreen
     ? 'w-full h-full'
@@ -202,7 +203,7 @@ export default function AnimatedModal({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
-          className={`fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] flex ${fullscreen ? '' : backdropAlign}`}
+          className={`fixed inset-0 z-50 bg-[var(--bg-overlay)] backdrop-blur-[2px] flex ${fullscreen ? '' : backdropAlign}`}
           onClick={closeOnBackdrop ? onClose : undefined}
         >
           <motion.div
@@ -237,8 +238,8 @@ export default function AnimatedModal({
                 <div className={`h-1.5 rounded-full transition-all ${expanded ? 'bg-[var(--text-2)] w-12' : 'bg-[var(--text-4)] w-10'}`} />
               </button>
             )}
-            {/* 콘텐츠 — overflow-y-auto로 자유 스크롤. drag 충돌 없음. */}
-            <div className={isSheet ? 'flex-1 overflow-y-auto overscroll-contain' : ''}>
+            {/* 시트 표시 면에서만 자식 배경을 클립. 피커 포털·중앙형 투명 래퍼는 그대로 둔다. */}
+            <div className={isSheet ? 'min-h-0 flex-1 overflow-y-auto overscroll-contain' : ''}>
               {children}
             </div>
           </motion.div>

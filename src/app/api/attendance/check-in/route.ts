@@ -8,10 +8,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
 import { validateInput, rules } from '@/lib/validate'
 import { todaysSubjectsLabel } from '@/lib/format'
+import { isScheduledDay } from '@/lib/attendanceDay'
 
 interface CheckInBody {
   code?: string
   action?: 'check_in' | 'check_out'
+  /** '오늘 수업일 아님' 안내를 보고 사람이 한 번 더 누른 요청 — 가드를 통과시킨다. */
+  confirm?: boolean
 }
 
 // 서버 TZ가 KST가 아닐 수 있음(Vercel=UTC). UTC+9 shift 후 getUTC* 로 KST 벽시계 직접 계산.
@@ -83,7 +86,7 @@ export async function POST(request: NextRequest) {
   // 학생 식별 (활성 학생만)
   const { data: students, error: studentError } = await supabase
     .from('tuition_students')
-    .select('id, name, class_id, parent_phone, parent_father_phone, attendance_recipient, phone, withdrawal_date')
+    .select('id, name, class_id, parent_phone, parent_father_phone, attendance_recipient, attendance_extra_phone, phone, withdrawal_date')
     .eq('attendance_code', code)
     .is('withdrawal_date', null)
   if (studentError) {
@@ -104,40 +107,60 @@ export async function POST(request: NextRequest) {
   const nowIso = new Date().toISOString()
   const timeText = nowKstHHmm()
 
-  // 두 과목 수강생 — 이 출결이 어느 과목 수업인지 note에 남긴다 (2026-08-31 운영자님 지시:
-  // "나중에 샘들이 확인할때 알아볼 수 있게 정리". 키오스크 조작·알림톡 무변경, 기록 주석 전용).
-  // 판정 실패는 무시 — 주석은 best-effort, 출결 자체를 막지 않는다.
-  let subjectNote: string | null = null
-  try {
-    if (firstStudent.parent_phone) {
-      const { data: personRows } = await supabase
-        .from('tuition_students')
-        .select('class_id')
-        .eq('name', firstStudent.name)
-        .eq('parent_phone', firstStudent.parent_phone)
-        .is('withdrawal_date', null)
-      const classIds = (personRows ?? []).map(r => r.class_id).filter((v): v is string => !!v)
-      if (classIds.length >= 2) {
-        const { data: classes } = await supabase
-          .from('tuition_classes')
-          .select('subject, class_days')
-          .in('id', classIds)
-        const weekday = new Date(`${date}T00:00:00`).getDay() // TZ=Asia/Seoul (instrumentation)
-        subjectNote = todaysSubjectsLabel(
-          (classes ?? []).map(c => ({ subject: c.subject, classDays: c.class_days })), weekday)
+  // 이 사람이 듣는 반들(과목·수업요일) — 아래 두 곳이 같이 쓴다. 조회는 한 번만.
+  //  ① 과목 주석: 두 과목 수강생의 출결이 어느 수업인지 note 에 남긴다 (2026-08-31 운영자님 지시)
+  //  ② 수업일 가드: 오늘이 수업일이 아니면 되묻는다 (2026-09-09, 아래 참조)
+  // 판정 실패는 무시 — best-effort, 출결 자체를 막지 않는다.
+  const weekday = new Date(`${date}T00:00:00`).getDay() // TZ=Asia/Seoul (instrumentation)
+  const personClassesPromise = (async (): Promise<{ subject: string | null; classDays: string | null }[]> => {
+    try {
+      let classIds = sameName.map(s => s.class_id).filter((v): v is string => !!v)
+      if (firstStudent.parent_phone) {
+        const { data: personRows } = await supabase
+          .from('tuition_students')
+          .select('class_id')
+          .eq('name', firstStudent.name)
+          .eq('parent_phone', firstStudent.parent_phone)
+          .is('withdrawal_date', null)
+        const ids = (personRows ?? []).map(r => r.class_id).filter((v): v is string => !!v)
+        if (ids.length) classIds = ids
       }
+      if (!classIds.length) return []
+      const { data: classes } = await supabase
+        .from('tuition_classes')
+        .select('subject, class_days')
+        .in('id', classIds)
+      return (classes ?? []).map(c => ({ subject: c.subject, classDays: c.class_days }))
+    } catch (e) {
+      console.error('[attendance] 반 정보 조회 실패(출결은 계속):', e instanceof Error ? e.message : String(e))
+      return []
     }
-  } catch (e) {
-    console.error('[attendance] 과목 주석 판정 실패(출결은 계속):', e instanceof Error ? e.message : String(e))
-  }
+  })()
 
   // 오늘 출결 row 확인 (학생 1번 row 기준)
-  const { data: existing } = await supabase
-    .from('tuition_attendance')
+  const [personClasses, { data: existing }] = await Promise.all([
+    personClassesPromise,
+    supabase.from('tuition_attendance')
     .select('id, status, check_in_time, check_out_time, note')
     .eq('student_id', studentId)
     .eq('date', date)
-    .maybeSingle()
+    .maybeSingle(),
+  ])
+  const subjectNote = personClasses.length >= 2 ? todaysSubjectsLabel(personClasses, weekday) : null
+
+  // 🔴 수업일 가드 (2026-09-09 운영자님 지시) — 오늘이 그 학생 수업일이 아니면 **기록도 알림톡도 하지 않고**
+  // 되묻는다. 계기: 한 자리만 다른 코드를 잘못 눌러(1596→1599) 오지도 않은 학생의 하원 알림톡이
+  // 수요일마다 학부모에게 나갔다(9/2·9/9 실측). 유효한 코드라 서버는 정상 처리했던 것.
+  // 보강·자습 등 진짜 예외는 안내를 보고 한 번 더 누르면(confirm) 그대로 처리된다.
+  // 요일 정보가 없으면 통과 — 가드는 오발송만 막고 정상 출결을 막지 않는다(isScheduledDay null).
+  if (!body.confirm && isScheduledDay(personClasses.map(c => c.classDays), weekday) === false) {
+    return NextResponse.json({
+      ok: false,
+      needsConfirm: true,
+      student: { name: studentName },
+      message: `${studentName} 학생은 오늘 수업일이 아닙니다. 맞으면 한 번 더 눌러주세요`,
+    })
+  }
 
   if (action === 'check_in') {
     if (existing?.check_in_time) {
@@ -193,19 +216,28 @@ export async function POST(request: NextRequest) {
   const parentPhone = firstStudent.attendance_recipient === 'father'
     ? (firstStudent.parent_father_phone || firstStudent.parent_phone || '')
     : (firstStudent.parent_phone || '')
-  if (tplId && parentPhone && process.env.SOLAPI_API_KEY) {
-    void (async () => {
-      try {
-        const { sendAlimtalk } = await import('@/lib/solapi')
-        await sendAlimtalk({
-          to: parentPhone,
-          templateId: tplId,
-          variables: { 학생명: studentName, 시간: timeText },
-        })
-      } catch (e) {
-        console.error('[attendance] alimtalk fail', studentName, e instanceof Error ? e.message : String(e))
-      }
-    })()
+  const extraPhone = firstStudent.attendance_extra_phone || ''
+  const recipients = [{ role: 'primary', phone: parentPhone }]
+  if (extraPhone && extraPhone.replace(/\D/g, '') !== parentPhone.replace(/\D/g, '')) {
+    recipients.push({ role: 'extra', phone: extraPhone })
+  }
+  if (tplId && process.env.SOLAPI_API_KEY) {
+    for (const { role, phone } of recipients) {
+      if (!phone) continue
+      // 각각 시작·예외 처리: 한쪽의 지연이나 실패가 다른 쪽 발송을 막지 않는다.
+      void (async () => {
+        try {
+          const { sendAlimtalk } = await import('@/lib/solapi')
+          await sendAlimtalk({
+            to: phone,
+            templateId: tplId,
+            variables: { 학생명: studentName, 시간: timeText },
+          })
+        } catch (e) {
+          console.error('[attendance] alimtalk fail', studentName, role, e instanceof Error ? e.message : String(e))
+        }
+      })()
+    }
   }
 
   // 내부 UUID·attendance row는 무인증 키오스크 응답에 노출하지 않음 (GET은 7/4 보안스윕에서 제거, POST도 통일)

@@ -10,7 +10,7 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
   return (
     <div className="flex flex-col items-center justify-center py-20">
       <p className="text-[var(--text-3)] mb-4">문제가 발생했습니다{error.digest ? ` (${error.digest})` : ''}</p>
-      <button onClick={reset} className="px-4 py-2 bg-[var(--blue)] text-white rounded-lg hover:opacity-90">
+      <button onClick={reset} className="px-4 py-2 bg-[var(--blue)] text-[var(--on-action)] rounded-lg hover:opacity-90">
         다시 시도
       </button>
     </div>

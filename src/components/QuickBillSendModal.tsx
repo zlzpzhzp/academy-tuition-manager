@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
 import { useAnimatedClose } from '@/lib/useAnimatedClose'
 import { createPortal } from 'react-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
+import { motion } from '@/components/paperMotion'
 import { X, Send, AlertTriangle, Check, Loader2, Search, PhoneOff, ChevronDown } from 'lucide-react'
 import { TButton } from '@/components/motion'
 import EmptyState from '@/components/ui/EmptyState'
@@ -201,9 +202,9 @@ export default function QuickBillSendModal({ students, grades, billingMonth, onC
       closeOnBackdrop={state !== 'sending'}
       maxWidth="max-w-md"
     >
-      <div className="bg-[var(--bg-card)] rounded-2xl max-h-[88vh] flex flex-col">
+      <div data-paper-card="" className="bg-[var(--bg-card)] rounded-2xl max-h-[88vh] flex flex-col">
         {/* 헤더 */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-[var(--bg-card)] z-10">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)] sticky top-0 bg-[var(--bg-card)] z-10 rounded-t-[inherit]">
           <h2 className="text-base font-bold tracking-tight flex items-center gap-2">
             <Send className="w-4 h-4 text-[var(--blue)]" />
             청구서 발송
@@ -238,9 +239,9 @@ export default function QuickBillSendModal({ students, grades, billingMonth, onC
                 transition={{ type: 'spring', stiffness: 300, damping: 20 }}
                 className="w-16 h-16 rounded-full bg-[var(--orange-dim)] flex items-center justify-center"
               >
-                <Check className="w-8 h-8 text-[var(--orange)]" />
+                <Check className="w-8 h-8 text-[var(--scheduled-text)]" />
               </motion.div>
-              <p className="text-base font-bold text-[var(--orange)]">예약 발송 등록됨</p>
+              <p className="text-base font-bold text-[var(--scheduled-text)]">예약 발송 등록됨</p>
               <p className="text-xs text-[var(--text-3)]">
                 영업시간 외 요청이라<br/>
                 <strong>{scheduledKst} KST</strong>에 자동 발송됩니다.
@@ -510,7 +511,7 @@ export default function QuickBillSendModal({ students, grades, billingMonth, onC
                       disabled={state !== 'form'}
                       className={`flex-1 py-2 rounded-xl text-xs font-semibold transition-colors disabled:opacity-60 ${
                         !isRegular
-                          ? 'bg-[var(--orange)]/15 text-[var(--orange)] ring-1 ring-[var(--orange)]/40'
+                          ? 'bg-[var(--orange)]/15 text-[var(--scheduled-text)] ring-1 ring-[var(--orange)]/40'
                           : 'bg-[var(--bg-elevated)] text-[var(--text-4)]'
                       }`}
                     >
@@ -570,8 +571,8 @@ export default function QuickBillSendModal({ students, grades, billingMonth, onC
                         initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -5 }}
                         className="flex items-start gap-2 p-3 bg-[var(--orange-dim)] rounded-xl"
                       >
-                        <AlertTriangle className="w-4 h-4 text-[var(--orange)] shrink-0 mt-0.5" />
-                        <p className="text-sm text-[var(--orange)]">
+                        <AlertTriangle className="w-4 h-4 text-[var(--scheduled-text)] shrink-0 mt-0.5" />
+                        <p className="text-sm text-[var(--scheduled-text)]">
                           <strong>{selected.name}</strong>님에게 <strong>{formatWon(amount)}</strong> 청구서를 발송합니다. 확인하시겠습니까?
                         </p>
                       </motion.div>
@@ -610,12 +611,12 @@ export default function QuickBillSendModal({ students, grades, billingMonth, onC
               disabled={!readyToSend || state === 'sending'}
               className={`flex-1 py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${
                 state === 'confirming'
-                  ? 'bg-[var(--orange)] text-white hover:opacity-90'
+                  ? 'bg-[var(--orange)] text-[var(--on-action)] hover:opacity-90'
                   : state === 'sending'
-                    ? 'bg-[var(--blue)] text-white opacity-70 cursor-not-allowed'
+                    ? 'bg-[var(--blue)] text-[var(--on-action)] opacity-70 cursor-not-allowed'
                     : state === 'error'
-                      ? 'bg-[var(--blue)] text-white hover:opacity-90'
-                      : 'bg-[var(--blue)] text-white hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed'
+                      ? 'bg-[var(--blue)] text-[var(--on-action)] hover:opacity-90'
+                      : 'bg-[var(--blue)] text-[var(--on-action)] hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed'
               }`}
             >
               {state === 'sending' ? (
@@ -676,40 +677,54 @@ interface PickerPopoverProps {
 }
 
 function PickerPopover({ anchorRef, onClose, children }: PickerPopoverProps) {
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null)
+  const positionRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!anchorRef.current) return
+  useLayoutEffect(() => {
+    let frame: number | null = null
+    let disposed = false
     const update = () => {
+      frame = null
       const el = anchorRef.current
-      if (!el) return
+      const position = positionRef.current
+      if (!el || !position) return
       const rect = el.getBoundingClientRect()
-      setPos({ top: rect.bottom + 6, left: rect.left, width: rect.width })
+      // 진입 모션의 transform과 위치 추적의 transform은 서로 다른 요소가 소유한다.
+      position.style.transform = `translate3d(${rect.left}px, ${rect.bottom + 6}px, 0)`
+      position.style.width = `${rect.width}px`
+      position.style.visibility = 'visible'
+    }
+    const schedule = () => {
+      if (!disposed && frame === null) frame = requestAnimationFrame(update)
     }
     update()
-    window.addEventListener('resize', update)
-    window.addEventListener('scroll', update, true)
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule)
+    if (anchorRef.current) observer?.observe(anchorRef.current)
+    document.fonts?.ready.then(schedule)
+    window.addEventListener('resize', schedule)
+    window.addEventListener('scroll', schedule, { capture: true, passive: true })
     return () => {
-      window.removeEventListener('resize', update)
-      window.removeEventListener('scroll', update, true)
+      disposed = true
+      if (frame !== null) cancelAnimationFrame(frame)
+      observer?.disconnect()
+      window.removeEventListener('resize', schedule)
+      window.removeEventListener('scroll', schedule, true)
     }
   }, [anchorRef])
-
-  if (!pos) return null
 
   return createPortal(
     <div data-picker-portal>
       <div className="fixed inset-0 z-[70]" onClick={onClose} />
-      <motion.div
+      <div ref={positionRef} className="fixed top-0 left-0 z-[71]" style={{ visibility: 'hidden' }}>
+      <motion.div data-paper-card=""
         initial={{ opacity: 0, y: -4, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: -4, scale: 0.98 }}
         transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
-        className="fixed z-[71] bg-[var(--bg-card)] border border-[var(--border)] rounded-xl shadow-xl p-2"
-        style={{ top: pos.top, left: pos.left, width: pos.width }}
+        className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl shadow-xl p-2"
       >
         {children}
       </motion.div>
+      </div>
     </div>,
     document.body
   )

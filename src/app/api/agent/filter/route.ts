@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireAdminSession } from '@/lib/auth'
 import { GoogleGenerativeAI } from '@google/generative-ai'
+import { withGeminiModel } from '@/lib/geminiModel'
 import { getTodayString } from '@/lib/date'
 
 const SYSTEM_PROMPT = `당신은 학원 원비관리 시스템의 필터 엔진입니다.
@@ -85,19 +86,20 @@ export async function POST(req: Request) {
     const currentDate = getTodayString()
 
     const genAI = new GoogleGenerativeAI(apiKey)
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
+    const buildModel = (modelName: string) => genAI.getGenerativeModel({
+      model: modelName,
       systemInstruction: SYSTEM_PROMPT
         .replace(/{current_date}/g, currentDate)
         .replace(/{billing_month}/g, context.billing_month || currentDate.slice(0, 7)),
     }, {
-      // 서버 US IP 지역차단 대응 — 로컬 Vertex 프록시 경유 (2026-07-10 amnesia a2a). agent/route.ts와 동일.
+      // 서버 US IP 지역차단 대응 — 로컬 Vertex 프록시 경유 (2026-07-10). agent/route.ts와 동일.
       ...(process.env.GEMINI_BASE_URL ? { baseUrl: process.env.GEMINI_BASE_URL } : {}),
     })
 
     const prompt = `학생 데이터:\n${JSON.stringify(context.students, null, 2)}\n\n필터 요청: ${query}`
 
-    const result = await model.generateContent(prompt)
+    // 조회 전용이라 모델 폴백 재시도가 안전하다 (2026-09-12 2.5 종료 대응)
+    const result = await withGeminiModel(m => buildModel(m).generateContent(prompt))
     const text = result.response.text()
 
     const jsonMatch = text.match(/\{[\s\S]*\}/)

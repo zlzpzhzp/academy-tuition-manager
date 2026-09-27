@@ -5,7 +5,7 @@ import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import { LayoutDashboard, CreditCard, Send, Settings, Wallet, Flame } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { motion } from 'framer-motion'
+import { motion } from '@/components/paperMotion'
 import useSWR from 'swr'
 import { swrFetcher } from '@/lib/utils'
 import { useNavDirection } from './PageTransition'
@@ -24,7 +24,7 @@ export default function Navbar() {
   const { setDirection } = useNavDirection()
   const mobileNavRef = useRef<HTMLDivElement>(null)
   const [indicatorStyle, setIndicatorStyle] = useState({ left: 0, width: 0 })
-  // optimistic 활성 탭 — 탭 누르는 즉시 표시(라우팅 완료 전). 워라/쌤 nav-perf 표준 (2026-06-04)
+  // optimistic 활성 탭 — 탭 누르는 즉시 표시(라우팅 완료 전). 자매 앱 nav-perf 표준 (2026-06-04)
   const [optimisticIdx, setOptimisticIdx] = useState<number | null>(null)
 
   // '지금 발송이 진짜인가'를 알려주는 유일한 화면 표식 — 조회 실패 시 배지가 조용히 사라지면
@@ -36,7 +36,7 @@ export default function Navbar() {
   const isTestMode = testModeData?.testMode === true
   const testModeUnknown = !!testModeError
 
-  // 쌤앱 신규생은 DB 트리거로 자동 등록되므로 승인 대기 배지 폐기 (2026-05-30)
+  // 강사 앱 신규생은 DB 트리거로 자동 등록되므로 승인 대기 배지 폐기 (2026-05-30)
   const pendingRequests = 0
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + '/')
@@ -67,16 +67,23 @@ export default function Navbar() {
 
   // 모바일 하단 인디케이터 위치 계산
   useEffect(() => {
-    if (mobileNavRef.current && activeIdx >= 0) {
-      const items = mobileNavRef.current.children
-      if (items[activeIdx]) {
-        const el = items[activeIdx] as HTMLElement
-        setIndicatorStyle({
-          left: el.offsetLeft + el.offsetWidth / 2 - 12,
-          width: 24,
-        })
-      }
+    const measure = () => {
+      if (!mobileNavRef.current || activeIdx < 0) return
+      const el = mobileNavRef.current.children[activeIdx] as HTMLElement | undefined
+      if (!el) return
+      setIndicatorStyle({ left: el.offsetLeft + el.offsetWidth / 2 - 12, width: 24 })
     }
+    measure()
+    // 탭바 폭은 viewport 가 안 바뀌어도 변한다 — 본문이 넘쳐 세로 스크롤바가 생기는 순간 430→415 로 줄고
+    // 탭이 86→83 이 되는데 resize 이벤트는 안 뜬다(2026-09-13 라이브 실측: 그래서 밑줄이 4.5px 오른쪽에 앉았다).
+    // 크기 변화는 ResizeObserver 로 잡는다. 폰트 로드 후 재측정도 같이.
+    const nav = mobileNavRef.current
+    const ro = typeof ResizeObserver !== 'undefined' && nav ? new ResizeObserver(() => measure()) : null
+    if (ro && nav) ro.observe(nav)
+    const fonts = (document as Document & { fonts?: FontFaceSet }).fonts
+    fonts?.ready.then(measure).catch(() => {})
+    window.addEventListener('resize', measure)
+    return () => { ro?.disconnect(); window.removeEventListener('resize', measure) }
   }, [activeIdx])
 
   if (pathname === '/login' || pathname === '/kiosk') return null
@@ -84,7 +91,7 @@ export default function Navbar() {
   return (
     <>
       {/* 데스크톱 상단 */}
-      <nav className="fixed top-0 left-0 right-0 z-40" style={{ background: 'var(--bg-card)', borderBottom: '1px solid var(--border)' }}>
+      <nav className="fixed top-0 left-0 right-0 z-40" style={{ background: 'var(--bg-card)', borderBottom: '1px dashed var(--paper-edge)' }}>
         <div className="max-w-4xl mx-auto px-5">
           <div className="flex items-center justify-between h-14">
             <Link href="/dashboard" className="flex items-center gap-2.5" aria-label="홈으로 이동">
@@ -102,7 +109,7 @@ export default function Navbar() {
               {isTestMode && (
                 <span
                   className="text-[9px] font-bold px-1.5 py-0.5 rounded-md"
-                  style={{ background: 'var(--orange-dim)', color: 'var(--orange)' }}
+                  style={{ background: 'var(--orange-dim)', color: 'var(--scheduled-text)' }}
                   title="결제선생 테스트 모드 — 실제 발송되지 않습니다"
                 >
                   TEST
@@ -122,7 +129,7 @@ export default function Navbar() {
                       onClick={() => handleTap(idx)}
                       className={`relative flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-colors
                         ${active
-                          ? 'text-white'
+                          ? 'text-[var(--on-action)]'
                           : 'text-[var(--text-3)] hover:text-[var(--text-1)]'}`}
                     >
                       {active && (
@@ -137,9 +144,9 @@ export default function Navbar() {
                         {label}
                         {showBadge && (
                           <span
-                            className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold text-white rounded-full"
-                            style={{ background: 'var(--red, #e34a3f)' }}
-                            aria-label={`쌤 추가요청 ${pendingRequests}건`}
+                            className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold text-[var(--on-action)] rounded-full"
+                            style={{ background: 'var(--red)' }}
+                            aria-label={`강사 앱 추가요청 ${pendingRequests}건`}
                           >
                             {pendingRequests > 99 ? '99+' : pendingRequests}
                           </span>
@@ -155,7 +162,7 @@ export default function Navbar() {
                 aria-label="재정"
                 className={`p-2.5 rounded-xl transition-all ${
                   isActive('/finance')
-                    ? 'bg-[var(--blue)] text-white'
+                    ? 'bg-[var(--blue)] text-[var(--on-action)]'
                     : 'text-[var(--text-3)] hover:text-[var(--text-1)] hover:bg-[var(--bg-card-hover)]'
                 }`}
               >
@@ -167,12 +174,16 @@ export default function Navbar() {
       </nav>
 
       {/* 모바일 하단 */}
-      <div className="fixed bottom-0 left-0 right-0 sm:hidden z-50" style={{ background: 'var(--bg-card)', borderTop: '1px solid var(--border)' }}>
-        {/* 슬라이딩 인디케이터 */}
-        {activeIdx >= 0 && (
+      <div className="fixed bottom-0 left-0 right-0 sm:hidden z-50" style={{ background: 'var(--bg-card)', borderTop: '1px dashed var(--paper-edge)' }}>
+        {/* 잉크 밑줄 인디케이터 — 선택 탭 아래 26px 남색 선, 손으로 그은 듯 -1° (2026-09-13 운영자님 "첫번째").
+            종전 점선 도장(data-paper-stamp)은 "좀 아닌 것 같다"로 폐기. 탭 사이 이동은 기존 스프링 그대로. */}
+        {activeIdx >= 0 && indicatorStyle.width > 0 && (
           <motion.div
-            className="absolute top-0 h-[2px] bg-[var(--blue)] rounded-full"
-            animate={{ left: indicatorStyle.left, width: indicatorStyle.width }}
+            aria-hidden
+            className="absolute left-0 bottom-[5px] h-[3px] w-[26px] rounded-full pointer-events-none"
+            style={{ background: 'var(--blue)', rotate: '-1deg' }}
+            initial={false}
+            animate={{ x: indicatorStyle.left + indicatorStyle.width / 2 - 13 }}
             transition={{ type: 'spring', stiffness: 400, damping: 30 }}
           />
         )}
@@ -193,11 +204,11 @@ export default function Navbar() {
                   transition={{ type: 'spring', stiffness: 400, damping: 25 }}
                   className="relative"
                 >
-                  <Icon className="w-[22px] h-[22px]" style={{ color: active ? 'var(--blue)' : 'var(--text-4)' }} />
+                  <Icon strokeWidth={2.15} className="w-[22px] h-[22px]" style={{ color: active ? 'var(--blue)' : 'var(--text-4)' }} />
                   {showBadge && (
                     <span
-                      className="absolute -top-1 -right-2 inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 text-[10px] font-bold text-white rounded-full"
-                      style={{ background: 'var(--red, #e34a3f)' }}
+                      className="absolute -top-1 -right-2 inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 text-[10px] font-bold text-[var(--on-action)] rounded-full"
+                      style={{ background: 'var(--red)' }}
                     >
                       {pendingRequests > 9 ? '9+' : pendingRequests}
                     </span>
@@ -205,7 +216,7 @@ export default function Navbar() {
                 </motion.div>
                 <motion.span
                   className="text-[10px] font-bold"
-                  animate={{ color: active ? 'var(--blue)' : 'var(--text-4)', scale: active ? 1.05 : 1 }}
+                  animate={{ color: active ? 'var(--text-1)' : 'var(--text-4)', scale: active ? 1.05 : 1 }}
                   transition={{ type: 'spring', stiffness: 400, damping: 25 }}
                 >
                   {label}

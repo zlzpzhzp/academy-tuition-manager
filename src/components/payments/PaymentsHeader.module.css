@@ -1,0 +1,118 @@
+.header {
+  --payments-scroll-progress: 0;
+  pointer-events: none;
+}
+
+/* 설정 조회 미지원도 layout effect에서 즉시 작은 크기를 선택한다. */
+.header[data-payments-motion='reduced'] {
+  --payments-scroll-progress: 1;
+}
+
+/* 문서 공간은 항상 84px. 스크롤 갱신은 transform만 사용한다. */
+.nav {
+  position: relative;
+  height: 84px;
+}
+
+.background {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  pointer-events: auto;
+  transform-origin: center top;
+  transform: scaleY(calc(1 - 32 / 84 * var(--payments-scroll-progress)));
+}
+
+.title {
+  position: absolute;
+  top: 8px;
+  left: 56px;
+  right: 56px;
+  transform-origin: center top;
+  transform: scale(calc(1 - .38 * var(--payments-scroll-progress)));
+}
+
+.previous, .next {
+  position: absolute;
+  top: 4px;
+  width: calc(50% - 138px);
+  display: flex;
+}
+/* 축소되면 화살표도 작아진 제목 양옆으로 모인다 (2026-09-13).
+   p=1 에서 안쪽 가장자리 = 중앙 ± 82px — 축소 제목 반폭(9월 61 / 10~12월 70)에 12~21px 여백.
+   이동 wrapper 폭 자체가 이동 거리 W/2-138px. translate의 100%는 그 폭이므로
+   끝점은 이전=12+(W/2-138)=W/2-126, 다음=W-56-(W/2-138)=W/2+82.
+   전체 폭 wrapper를 밀지 않으므로 빈 wrapper가 문서 가로 overflow를 만들지 않는다.
+   폭 변경은 CSS가 처리하며 스크롤 중 left/right·크기 측정은 없다.
+   wrapper는 입력을 통과시키고 내부 TButton만 44px hit 영역/누름 scale을 소유한다. */
+.previous {
+  left: 12px;
+  justify-content: flex-start;
+  transform: translate(calc(100% * var(--payments-scroll-progress)), calc(16px * (1 - var(--payments-scroll-progress))));
+}
+.next {
+  right: 12px;
+  justify-content: flex-end;
+  transform: translate(calc(-100% * var(--payments-scroll-progress)), calc(16px * (1 - var(--payments-scroll-progress))));
+}
+
+.monthButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  pointer-events: auto;
+}
+.monthButton:hover { background: var(--bg-elevated); }
+
+/* 상태줄은 자기 높이를 확보하되 시각 네비 바로 아래로 이동한다.
+   남는 투명 32px는 pointer-events:none인 헤더를 통과한다. */
+.status {
+  background: var(--bg);
+  transform: translateY(calc(-32px * var(--payments-scroll-progress)));
+  pointer-events: auto;
+}
+
+/* 커스텀 속성을 keyframes로 보간하지 않는다. 다섯 transform이 같은 root 구간을 탄다.
+   scroll 없는 문서는 timeline이 inactive: 기본 p=0의 transform을 사용한다. */
+.header[data-payments-motion='css'] :is(.title, .background, .previous, .next, .status) {
+  animation-duration: auto;
+  animation-timing-function: cubic-bezier(.3333333333, 0, .6666666667, 1);
+  animation-fill-mode: both;
+  animation-timeline: scroll(root block);
+  animation-range: 0px 120px;
+}
+.header[data-payments-motion='css'] .title { animation-name: title-collapse; }
+.header[data-payments-motion='css'] .background { animation-name: background-collapse; }
+.header[data-payments-motion='css'] .previous { animation-name: previous-collapse; }
+.header[data-payments-motion='css'] .next { animation-name: next-collapse; }
+.header[data-payments-motion='css'] .status { animation-name: status-collapse; }
+
+@keyframes title-collapse {
+  from { transform: scale(1); }
+  to { transform: scale(.62); }
+}
+@keyframes background-collapse {
+  from { transform: scaleY(1); }
+  to { transform: scaleY(calc(52 / 84)); }
+}
+@keyframes previous-collapse {
+  from { transform: translate(0px, 16px); }
+  to { transform: translate(100%, 0px); }
+}
+@keyframes next-collapse {
+  from { transform: translate(0px, 16px); }
+  to { transform: translate(-100%, 0px); }
+}
+@keyframes status-collapse {
+  from { transform: translateY(0px); }
+  to { transform: translateY(-32px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .header { --payments-scroll-progress: 1 !important; }
+  .header :is(.title, .background, .previous, .next, .status) { animation: none !important; }
+}

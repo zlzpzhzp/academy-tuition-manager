@@ -24,15 +24,15 @@ import {
 } from '@/lib/student360'
 
 // 학생 360 (원비판, 2026-08-20) — GET /api/students/[id]/360
-// 원비 학생(tuition_students.id)을 축으로 쌤(반·담당·진도)·질문(제출)·성적·상담을 한 화면에 모은다.
-// 원본은 쌤 src/app/api/students/[id]/360/route.ts — 4앱이 같은 Supabase 프로젝트라 그쪽 API 를
+// 이 앱의 학생(tuition_students.id)을 축으로 강사 앱(반·담당·진도)·질문(제출)·성적·상담을 한 화면에 모은다.
+// 원본은 강사 앱 src/app/api/students/[id]/360/route.ts — 4앱이 같은 Supabase 프로젝트라 그쪽 API 를
 // 원격 호출하지 않고(인증 경계를 넘기지 않는다) 여기서 같은 테이블을 service_role 로 직접 읽는다.
 //
-// 🔒 권한: 원비는 관리자 단일 세션이라 requireAdminSession 만. 쌤의 반 스코핑(student360Access)은
-//   여기 개념이 없어 제거했다 — 원비는 원래 전체 명단(퇴원 포함)을 다루는 앱이다.
+// 🔒 권한: 이 앱은 관리자 단일 세션이라 requireAdminSession 만. 강사 앱의 반 스코핑(student360Access)은
+//   여기 개념이 없어 제거했다 — 이 앱은 원래 전체 명단(퇴원 포함)을 다루는 앱이다.
 // 🚫 읽기 전용 — 이 라우트는 SELECT 만 한다. write 추가 금지(타앱 테이블은 그 앱이 source of truth).
-// ⚠️ 재원 필터 없음: 퇴원생(withdrawal_date NOT NULL)도 그대로 조회된다(퇴원 행은 홈피 성적 표시가
-//   의존하는 정본이기도 하다 — HANDOFF [trap] 참조).
+// ⚠️ 재원 필터 없음: 퇴원생(withdrawal_date NOT NULL)도 그대로 조회된다(퇴원 행은 홈페이지 앱 성적 표시가
+//   의존하는 정본이기도 하다).
 // ⚠️ 이름 기반 매칭(진도·질문·memos)은 동명이인이면 오귀속된다 → isAmbiguousName 이면 id 귀속 행만 남긴다.
 
 interface DbErr { code?: string; message?: string }
@@ -68,7 +68,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const name: string = student.name
   const parentPhone: string | null = student.parent_phone ?? null
 
-  // 2) 인물 스코프 확장 — 원비는 과목별 1행 구조(같은 사람 = 같은 name+parent_phone 행 전부).
+  // 2) 인물 스코프 확장 — 이 앱은 과목별 1행 구조(같은 사람 = 같은 name+parent_phone 행 전부).
   type PersonRow = { id: string; class_id: string | null; withdrawal_date: string | null }
   let personRows: PersonRow[] = [{ id: student.id, class_id: student.class_id ?? null, withdrawal_date: student.withdrawal_date ?? null }]
   if (name && parentPhone) {
@@ -85,7 +85,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const personIds = personRows.map(r => r.id)
   const personIdList = personIds.join(',')
 
-  // 3) 1차 병렬 — 과목(반) 라벨 · 쌤 학생행 · 질문앱 별칭 · 동명이인 판정.
+  // 3) 1차 병렬 — 과목(반) 라벨 · 강사 앱 학생행 · 질문앱 별칭 · 동명이인 판정.
   const [subjectClassRes, dmStudentRes, aliasRes, dupRes] = await Promise.all([
     personRows.some(r => r.class_id)
       ? soft(
@@ -95,7 +95,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
             .in('id', personRows.map(r => r.class_id).filter((v): v is string => !!v))
         )
       : NONE,
-    // 쌤 학생행: dm_students.id = tuition_students.id 동일 체계(+ tuition_student_id 컬럼) — 둘 다 본다.
+    // 강사 앱 학생행: dm_students.id = tuition_students.id 동일 체계(+ tuition_student_id 컬럼) — 둘 다 본다.
     soft(
       supabase
         .from('dm_students')
@@ -120,7 +120,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   const nameCandidates = qaNameCandidates(name, aliases)
   const trimmedName = name?.trim() || null
 
-  // 4) 2차 병렬 — 쌤 반/담당, 이름 기반 조회(진도·질문), 성적, 상담, 워라 학생 링크.
+  // 4) 2차 병렬 — 강사 앱 반/담당, 이름 기반 조회(진도·질문), 성적, 상담, 학습관리 앱 학생 링크.
   const [
     dmClassRes,
     teacherRes,
@@ -213,16 +213,16 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
             .limit(5)
         )
       : NONE,
-    // 워라 학생 링크 — student_notes.student_id 는 워라 students.id 체계. students.tuition_student_id 로 역추적.
+    // 학습관리 앱 학생 링크 — student_notes.student_id 는 학습관리 앱 students.id 체계. students.tuition_student_id 로 역추적.
     soft(supabase.from('students').select('id').in('tuition_student_id', personIds)),
   ])
 
-  // 5) 3차 병렬 — 전화·기타 상담 (워라 id·동명이인 판정에 의존)
+  // 5) 3차 병렬 — 전화·기타 상담 (학습관리 앱 id·동명이인 판정에 의존)
   const woraIds = ((woraRes.data as { id: string }[] | null) ?? []).map(r => r.id)
   const ilikeName = trimmedName ? sanitizeIlikeName(trimmedName) : ''
 
   const [callLogRes, notesRes, memosRes] = await Promise.all([
-    // 구조화 통화·상담 원장(memo 봇이 학생 식별해 append) — 이름검색보다 우선.
+    // 구조화 통화·상담 원장(상담 기록 도구가 학생을 식별해 append) — 이름검색보다 우선.
     soft(
       supabase
         .from('student_call_logs')
@@ -354,7 +354,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     createdAt: r.occurred_at,
   }))
 
-  // 쌤 반 표기 — dm_classes 엔 subject 가 없지만 tuition_classes 와 id 공유(실측) → classById 로 과목 병기.
+  // 강사 앱 반 표기 — dm_classes 엔 subject 가 없지만 tuition_classes 와 id 공유(실측) → classById 로 과목 병기.
   const dmClass = dmClassRes.data as { id: string; name: string; schedule: unknown } | null
   const dmClassLabel = (() => {
     if (!dmClass) return null
@@ -375,7 +375,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         teacherName,
         dmStatus: dmStudent?.status ?? null,
         enrollments,
-        note: dmStudentRes.note ?? (dmStudent ? null : '쌤 앱에 연결된 학생 행이 없습니다'),
+        note: dmStudentRes.note ?? (dmStudent ? null : '강사 앱에 연결된 학생 행이 없습니다'),
       },
       classes: {
         className: dmClassLabel,

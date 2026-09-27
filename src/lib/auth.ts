@@ -81,7 +81,7 @@ export function verifySessionToken(token: string): boolean {
 /**
  * Cookie 헤더에서 같은 이름의 값을 **전부** 뽑는다.
  * 중복 쿠키(같은 이름 2개+)가 실렸을 때 하나만 집으면, 그게 남의(서명 불일치) 토큰이면 인증이 깨진다.
- * 실제 사고(2026-07-14 워라 dm_session Domain 승격 → 쌤 teacher.example.com 에 워라 토큰까지
+ * 실제 사고(2026-07-14 자매 앱 세션 쿠키 Domain 승격 → 다른 서브도메인 앱(teacher.example.com)에 자매 앱 토큰까지
  * 실려 401 7일 장애)의 원인이 '하나만 집는 파싱'이었다. 원비 auth_token 은 host-only라 즉시 위험은
  * 없지만, 미들웨어(request.cookies.get=마지막)와 이 가드(정규식=첫번째)가 서로 다른 쿠키를 집어
  * '페이지는 열리는데 API 401'이 재현됐다(2026-07-21 실측). → 후보 전부 검증, 하나라도 유효하면 통과.

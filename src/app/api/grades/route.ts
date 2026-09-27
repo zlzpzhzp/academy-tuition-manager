@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { supabase } from '@/lib/supabase'
-import { requireAdminSession } from '@/lib/auth'
+import { requireAdminSession, hasFinanceSession, stripFinanceFields } from '@/lib/auth'
 import { validateInput, rules } from '@/lib/validate'
 import { queryGradesTree, mapGradesTree } from '@/lib/queries'
 import { writeAuditLog } from '@/lib/auditLog'
@@ -10,7 +10,7 @@ export async function GET(request: Request) {
   if (unauthorized) return unauthorized
   const { data, error } = await queryGradesTree()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(mapGradesTree(data ?? []), {
+  return NextResponse.json(mapGradesTree(data ?? [], hasFinanceSession(request) ? undefined : stripFinanceFields), {
     // 2026-05-19: 학생 등록/퇴원 시 즉시 반영되도록 no-store. SWR dedupingInterval 5초로 중복 차단.
     headers: { 'Cache-Control': 'private, no-store' },
   })

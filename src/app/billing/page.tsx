@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, memo, createContext, useContext } from 'react'
 import { usePullToRefresh } from '@/lib/usePullToRefresh'
-import { ChevronDown, Loader2, AlertCircle, Clock, PhoneOff, Lock, Download, FileText, Ban, Send } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { ChevronDown, AlertCircle, Clock, PhoneOff, Lock, Download, FileText, Ban, Send } from 'lucide-react'
+import { AnimatePresence } from 'framer-motion'
+import { motion } from '@/components/paperMotion'
 import { TButton } from '@/components/motion'
 import Link from 'next/link'
 import type { Student, GradeWithClasses } from '@/types'
@@ -11,6 +12,8 @@ import { formatWon, formatNumber, formatClassName } from '@/lib/format'
 import { getStudentFee } from '@/types'
 import { useGrades, getActiveStudents, getPaymentDueDay, swrFetcher } from '@/lib/utils'
 import QuickBillSendModal from '@/components/QuickBillSendModal'
+import { PullRefreshIndicator, usePullRefreshIndicator } from '@/components/PullRefreshIndicator'
+import { BillingSkeleton } from '@/components/Skeleton'
 import useSWR from 'swr'
 
 interface BillRecord {
@@ -45,6 +48,15 @@ function timeAgo(iso: string, now: number): string {
   return `${Math.floor(min / 60)}시간 전`
 }
 
+// 60초 시계 — 내역 목록 전체가 아니라 '시간 글자'만 다시 그리게 컨텍스트로 내려준다 (2026-09-26 C10)
+const NowContext = createContext(0)
+
+/** 내역 한 줄의 상대 시각 — 시계 틱에는 이 글자만 다시 그린다 */
+function TimeAgoText({ iso }: { iso: string }) {
+  const now = useContext(NowContext)
+  return <>{timeAgo(iso, now)}</>
+}
+
 export default function BillingPage() {
   // 2026-07-07 사용자 지시: 월 선택 제거 → 전체 최신 변동순 현황판.
   // selectedMonth는 발송 대상·활성 학생 기준으로만 쓰는 현재월 고정값(월 네비 없음).
@@ -63,13 +75,13 @@ export default function BillingPage() {
 
   const { data: grades = [], isLoading: gradesLoading, mutate: mutateGrades } = useGrades<GradeWithClasses[]>()
   // month 없이 = 전체 기간을 최신 변동순으로 (연속 현황판)
-  const { data: bills = [], mutate: mutateBills } = useSWR<BillRecord[]>(
+  const { data: bills = [], mutate: mutateBills, isLoading: billsLoading } = useSWR<BillRecord[]>(
     `/api/billing`,
     swrFetcher,
     { refreshInterval: 30000 }
   )
 
-  const { data: testModeInfo } = useSWR<{ testMode: boolean }>(
+  const { data: testModeInfo, isLoading: testModeLoading } = useSWR<{ testMode: boolean }>(
     '/api/billing/test-mode',
     swrFetcher,
     { refreshInterval: 60000 }
@@ -77,7 +89,7 @@ export default function BillingPage() {
 
   // 납부 기록(전체) — "3일 이상 미결제" 판정에 현장(현금/이체 등) 납부를 교차 반영.
   // 청구서 status만 보면 오프라인으로 낸 학생이 영원히 미결제로 남음 (2026-07-10 전수점검 F6)
-  const { data: allPayments = [] } = useSWR<{ student_id: string; billing_month: string; amount: number }[]>(
+  const { data: allPayments = [], isLoading: allPaymentsLoading } = useSWR<{ student_id: string; billing_month: string; amount: number }[]>(
     '/api/payments',
     swrFetcher,
     { refreshInterval: 60000 }
@@ -226,8 +238,12 @@ export default function BillingPage() {
   // ─── Pull-to-refresh ──────────────────────────────────────
   // 공용 훅으로 대체 — 인라인 구현엔 try/finally가 없어 refresh 실패 시 스피너가 멈춰있던 잠재버그도 함께 해소.
   const PULL_THRESHOLD = 60
-  const { containerRef, pullDistance, isRefreshing } = usePullToRefresh({
+  // 표시(컨테이너 translate·아이콘)는 rAF 에서 DOM 에 직접 쓴다 — touchmove 마다 재렌더하던 것 제거(C07)
+  const pullVisual = usePullRefreshIndicator(PULL_THRESHOLD)
+  const { containerRef, isRefreshing } = usePullToRefresh({
     onRefresh: () => Promise.all([mutateGrades(), mutateBills()]),
+    threshold: PULL_THRESHOLD,
+    onPull: pullVisual.onPull,
   })
 
   const exportCsv = useCallback(() => {
@@ -256,8 +272,19 @@ export default function BillingPage() {
     URL.revokeObjectURL(url)
   }, [bills, studentById])
 
-  if (gradesLoading) {
-    return <div className="flex items-center justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-[var(--text-4)]" /></div>
+  const [everReady, setEverReady] = useState(false)
+
+  // 로딩 가드 — 화면이 기대는 SWR 소스 **전부**가 도착할 때까지 스켈레톤 (rule.swr_loading_guard, 2026-09-26 C10).
+  // 예전엔 grades 만 기다려서 결제율 0%·빈 통계로 그렸다가, 청구서·납부·테스트모드가 늦게 오면 '액션 필요'
+  // 카드·내역 카드·테스트 배지가 새로 끼어들며 아래를 밀었다(CLS 0.39). 가져오는 데이터·주기는 그대로.
+  // isLoading 은 '첫 데이터 없음 + 요청 중'만 참이라, 오류로 끝난 소스는 예전처럼 빈 값으로 그린다.
+  // 한 번 내용을 그린 뒤엔 스켈레톤으로 되돌아가지 않는다 — 첫 로드에 실패한 소스가 재시도할 때마다 isLoading 이
+  // 다시 참이 되는데(SWR), 그때 스켈레톤으로 바꾸면 열려 있던 청구서 발송 창(QuickBillSendModal)이 언마운트돼
+  // 진행·결과 화면을 잃는다(2026-09-26 verifier 지적).
+  const loadingNow = gradesLoading || billsLoading || allPaymentsLoading || testModeLoading
+  if (!everReady && !loadingNow) setEverReady(true) // 렌더 중 자기 상태 갱신(React 권장 패턴) — 한 번만 참이 된다
+  if (!everReady && loadingNow) {
+    return <BillingSkeleton />
   }
 
   // 2026-07-07 조용한실패 감사: `!== false`는 SWR 로딩 중(undefined)에 true로 오판 →
@@ -265,34 +292,10 @@ export default function BillingPage() {
   const isTestMode = testModeInfo?.testMode === true
 
   return (
+    <NowContext.Provider value={nowTs}>
     <div ref={containerRef}>
-      {/* Pull-to-refresh 인디케이터 */}
-      <AnimatePresence>
-        {pullDistance > 0 && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: pullDistance, opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="flex items-center justify-center overflow-hidden"
-          >
-            <motion.div
-              animate={{
-                rotate: isRefreshing ? 360 : (pullDistance / PULL_THRESHOLD) * 360,
-                scale: pullDistance >= PULL_THRESHOLD ? 1.15 : 0.9,
-              }}
-              transition={isRefreshing
-                ? { rotate: { duration: 0.8, repeat: Infinity, ease: 'linear' } }
-                : { type: 'spring', stiffness: 200, damping: 15 }
-              }
-            >
-              <svg className="w-6 h-6 text-[var(--text-4)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Pull-to-refresh 인디케이터 — 0 높이, 컨테이너가 내려가며 생긴 틈에 그린다(레이아웃 없음) */}
+      <PullRefreshIndicator indicatorRef={pullVisual.indicatorRef} scaleRef={pullVisual.scaleRef} rotateRef={pullVisual.rotateRef} refreshing={isRefreshing} />
 
       <div className="pt-2 pb-1">
         <div className="mb-3 px-1">
@@ -305,8 +308,8 @@ export default function BillingPage() {
         {/* 청구서 발송 — 메인 진입점. Border Beam(브랜드색, 은은 3.5s) 적용 (2026-07-07 dispatch) */}
         <TButton
           onClick={() => setShowSendModal(true)}
-          className="border-beam w-full mt-2 flex items-center justify-center gap-2 py-3 rounded-2xl bg-[var(--blue)] text-white text-sm font-bold hover:opacity-90 active:scale-[0.98] transition-all shadow-[0_2px_12px_rgba(59,130,246,0.2)]"
-          style={{ '--bb-color': '#7db3ff', '--bb-color2': '#ffffff', '--bb-duration': '4s', '--bb-width': '2px' } as React.CSSProperties}
+          className="border-beam w-full mt-2 flex items-center justify-center gap-2 py-3 rounded-2xl bg-[var(--blue)] text-[var(--on-action)] text-sm font-bold hover:opacity-90 active:scale-[0.98] transition-all shadow-[var(--paper-shadow-sm)]"
+          style={{ '--bb-color': 'var(--blue)', '--bb-color2': 'var(--on-action)', '--bb-duration': '4s', '--bb-width': '2px' } as React.CSSProperties}
         >
           <Send className="w-4 h-4" />
           청구서 발송하기
@@ -314,7 +317,7 @@ export default function BillingPage() {
 
         {isTestMode && (
           <div className="mt-3 mb-2">
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--orange)] text-[11px] font-semibold">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--scheduled-text)] text-[11px] font-semibold">
               <Lock className="w-3 h-3" /> 테스트 모드
             </span>
           </div>
@@ -395,45 +398,8 @@ export default function BillingPage() {
           </div>
         )}
 
-        {/* 발송 수납 내역 — 내부 스크롤 */}
-        {recentActivity.length > 0 && (
-          <div className="card px-2 py-3.5 mb-3">
-            <div className="flex items-baseline justify-between mb-2 px-1">
-              <h2 className="text-sm font-semibold text-[var(--text-2)]">발송 · 수납</h2>
-              <span className="text-[10px] text-[var(--text-4)] tabular-nums">{recentActivity.length}건</span>
-            </div>
-            <div className="space-y-0.5 max-h-[72vh] overflow-y-auto pr-1 -mr-1">
-              {recentActivity.map(bill => {
-                const s = studentById.get(bill.student_id)
-                const meta = studentMetaById.get(bill.student_id)
-                const { label, color } = statusBadge(bill.status)
-                const isIrregular = bill.is_regular_tuition === false
-                const note = bill.bill_note
-                const metaParts = meta
-                  ? [meta.gradeName, meta.className, meta.dueDay ? `${meta.dueDay}일` : null].filter(Boolean)
-                  : []
-                return (
-                  <div key={bill.id} className="flex items-center gap-1.5 py-[3px] px-1" title={note ? `📝 ${note}` : undefined}>
-                    {/* 날짜 맨 왼쪽 — 글자폭에 딱 맞게(고정폭 제거) 이름과 밀착 */}
-                    <span className="text-[10px] text-[var(--text-4)] shrink-0 tabular-nums whitespace-nowrap">{timeAgo(bill.updated_at ?? bill.sent_at, nowTs)}</span>
-                    {/* 이름+메타 한 그룹 — 여백 최소, 내용 최대 노출 */}
-                    <div className="flex-1 min-w-0 flex items-baseline gap-1">
-                      <span className="text-xs font-medium shrink-0 truncate max-w-[52px]">{s?.name ?? meta?.name ?? '?'}</span>
-                      <span className="text-[10px] text-[var(--text-4)] truncate min-w-0">
-                        {metaParts.join('·')}{note ? ` · 📝${note}` : ''}
-                      </span>
-                    </div>
-                    {isIrregular && (
-                      <span className="text-[9px] font-bold px-1 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--orange)] shrink-0">비정규</span>
-                    )}
-                    <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0" style={{ color, background: dimColor(color) }}>{label}</span>
-                    <span className="text-[11px] text-[var(--text-3)] tabular-nums w-[54px] text-right shrink-0">{formatNumber(bill.amount)}</span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
+        {/* 발송 수납 내역 — 내부 스크롤. 메모 컴포넌트라 60초 시계 틱에는 다시 그리지 않는다(시간 글자만 갱신) */}
+        <BillHistoryList rows={recentActivity} studentById={studentById} studentMetaById={studentMetaById} />
 
         {/* 결제율 게이지 */}
         <div className="card p-4 mb-3">
@@ -461,7 +427,7 @@ export default function BillingPage() {
             </div>
             <div className="text-right">
               <p className="text-[10px] text-[var(--text-4)]">미결제 금액</p>
-              <p className="text-base font-bold tabular-nums" style={{ color: 'var(--orange)' }}>{formatWon(stats.pendingAmount)}</p>
+              <p className="text-base font-bold tabular-nums" style={{ color: 'var(--scheduled-text)' }}>{formatWon(stats.pendingAmount)}</p>
             </div>
           </div>
         </div>
@@ -484,10 +450,10 @@ export default function BillingPage() {
           </div>
           <div className="card p-3">
             <div className="flex items-center justify-between mb-1">
-              <span className="text-[11px]" style={{ color: 'var(--orange)' }}>미결제</span>
-              <span className="text-xs font-bold tabular-nums" style={{ color: 'var(--orange)' }}>{stats.activeSent}</span>
+              <span className="text-[11px]" style={{ color: 'var(--scheduled-text)' }}>미결제</span>
+              <span className="text-xs font-bold tabular-nums" style={{ color: 'var(--scheduled-text)' }}>{stats.activeSent}</span>
             </div>
-            <p className="text-xs font-semibold tabular-nums" style={{ color: 'var(--orange)' }}>{formatWon(stats.pendingAmount)}</p>
+            <p className="text-xs font-semibold tabular-nums" style={{ color: 'var(--scheduled-text)' }}>{formatWon(stats.pendingAmount)}</p>
           </div>
           <div className="card p-3">
             <div className="flex items-center justify-between mb-1">
@@ -535,8 +501,8 @@ export default function BillingPage() {
                     CSV 내보내기 ({bills.length}건)
                   </TButton>
                   <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-[var(--orange-dim)]">
-                    <AlertCircle className="w-4 h-4 text-[var(--orange)] shrink-0 mt-0.5" />
-                    <div className="text-xs text-[var(--orange)]">
+                    <AlertCircle className="w-4 h-4 text-[var(--scheduled-text)] shrink-0 mt-0.5" />
+                    <div className="text-xs text-[var(--scheduled-text)]">
                       <p className="font-semibold">
                         {isTestMode ? '테스트 모드 켜짐' : '운영 모드'}
                       </p>
@@ -564,8 +530,58 @@ export default function BillingPage() {
         />
       )}
     </div>
+    </NowContext.Provider>
   )
 }
+
+type StudentMeta = { name: string; gradeName: string; className: string; dueDay: number }
+
+/** 발송·수납 전체 내역 — 행 마크업·계산은 예전 그대로, 목록만 메모로 분리 (2026-09-26 C10) */
+const BillHistoryList = memo(function BillHistoryList({ rows, studentById, studentMetaById }: {
+  rows: BillRecord[]
+  studentById: Map<string, StudentWithClass>
+  studentMetaById: Map<string, StudentMeta>
+}) {
+  if (rows.length === 0) return null
+  return (
+    <div className="card px-2 py-3.5 mb-3">
+      <div className="flex items-baseline justify-between mb-2 px-1">
+        <h2 className="text-sm font-semibold text-[var(--text-2)]">발송 · 수납</h2>
+        <span className="text-[10px] text-[var(--text-4)] tabular-nums">{rows.length}건</span>
+      </div>
+      <div className="space-y-0.5 max-h-[72vh] overflow-y-auto pr-1 -mr-1">
+        {rows.map(bill => {
+          const s = studentById.get(bill.student_id)
+          const meta = studentMetaById.get(bill.student_id)
+          const { label, color } = statusBadge(bill.status)
+          const isIrregular = bill.is_regular_tuition === false
+          const note = bill.bill_note
+          const metaParts = meta
+            ? [meta.gradeName, meta.className, meta.dueDay ? `${meta.dueDay}일` : null].filter(Boolean)
+            : []
+          return (
+            <div key={bill.id} className="flex items-center gap-1.5 py-[3px] px-1" title={note ? `📝 ${note}` : undefined}>
+              {/* 날짜 맨 왼쪽 — 글자폭에 딱 맞게(고정폭 제거) 이름과 밀착 */}
+              <span className="text-[10px] text-[var(--text-4)] shrink-0 tabular-nums whitespace-nowrap"><TimeAgoText iso={bill.updated_at ?? bill.sent_at} /></span>
+              {/* 이름+메타 한 그룹 — 여백 최소, 내용 최대 노출 */}
+              <div className="flex-1 min-w-0 flex items-baseline gap-1">
+                <span className="text-xs font-medium shrink-0 truncate max-w-[52px]">{s?.name ?? meta?.name ?? '?'}</span>
+                <span className="text-[10px] text-[var(--text-4)] truncate min-w-0">
+                  {metaParts.join('·')}{note ? ` · 📝${note}` : ''}
+                </span>
+              </div>
+              {isIrregular && (
+                <span className="text-[9px] font-bold px-1 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--scheduled-text)] shrink-0">비정규</span>
+              )}
+              <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full whitespace-nowrap shrink-0" style={{ color, background: dimColor(color) }}>{label}</span>
+              <span className="text-[11px] text-[var(--text-3)] tabular-nums w-[54px] text-right shrink-0">{formatNumber(bill.amount)}</span>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+})
 
 function ActionRow({ icon, color, bg, label, count, expanded, onToggle, children }: {
   icon: React.ReactNode
@@ -628,7 +644,7 @@ function ActionItemRow({ name, detail, amount, irregular, note }: {
         <div className="flex items-center gap-1.5 flex-wrap">
           <span className="text-sm font-medium">{name}</span>
           {irregular && (
-            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--orange)]">비정규</span>
+            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--scheduled-text)]">비정규</span>
           )}
           <span className="text-[11px] text-[var(--text-4)]">{detail}</span>
         </div>
@@ -648,7 +664,7 @@ function statusBadge(status: string): { label: string; color: string } {
     case 'paid': return { label: '결제완료', color: 'var(--paid-text)' }
     case 'cancelled': return { label: '취소', color: 'var(--red)' }
     case 'destroyed': return { label: '파기', color: 'var(--red)' }
-    case 'sent': return { label: '발송됨', color: 'var(--orange)' }
+    case 'sent': return { label: '발송됨', color: 'var(--scheduled-text)' }
     default: return { label: status, color: 'var(--text-3)' }
   }
 }

@@ -3,21 +3,23 @@
 import { toast } from 'sonner'
 import { useState, useCallback, useRef, useMemo, useEffect, useLayoutEffect } from 'react'
 import { usePullToRefresh } from '@/lib/usePullToRefresh'
-import { createPortal } from 'react-dom'
-import { ChevronLeft, ChevronRight, ChevronDown, Check, ClipboardList, Download, Plus, Send, Mail, Loader2, CreditCard, Banknote, ArrowLeftRight, X, Clock, SearchX, AlertCircle, Bell, Split, UserMinus, RotateCcw, CheckCircle2, BadgeCheck, Camera } from 'lucide-react'
+import { ChevronRight, ChevronDown, Check, ClipboardList, Plus, Send, Mail, Loader2, CreditCard, Banknote, ArrowLeftRight, X, Clock, SearchX, AlertCircle, Bell, Split, UserMinus, RotateCcw, CheckCircle2, BadgeCheck, Camera } from 'lucide-react'
 import EmptyState from '@/components/ui/EmptyState'
 import type { Student, Payment, PaymentMethod, GradeWithClasses } from '@/types'
 import { formatWon, formatClassName } from '@/lib/format'
 import { getStudentFee, getStudentBaseFee, getStudentElectivesFee, hasSplitDueDays, getPaymentStatus, PAYMENT_STATUS_LABELS, PAYMENT_STATUS_COLORS, PAYMENT_METHOD_LABELS, parseClassDays, DAY_LABELS, getLastClassDate } from '@/types'
 import PaymentModal from '@/components/PaymentModal'
 import StudentModal from '@/components/StudentModal'
+import PaymentsHeader from '@/components/payments/PaymentsHeader'
+import PaymentDayFilterPicker, { type DayFilterValue, type PaymentFilter } from '@/components/payments/PaymentDayFilterPicker'
 import DatePickerPopup from '@/components/payments/DatePickerPopup'
 import MethodPickerPopup from '@/components/payments/MethodPickerPopup'
-import { getPrevMonth, getPaymentDueDay, isPaymentScheduled, getUnpaidLabelText, getActiveStudents, isWithdrawnStudent, safeMutate, decodePaymentMemo, useGrades, usePayments, revalidateGrades, revalidatePayments, getTodayString, injectPayment, swrFetcher, isBatchExcluded, isBatchExcludedNoBill, buildBillSettledSet, judgePrevMonthUnpaid } from '@/lib/utils'
+import { getPrevMonth, getPaymentDueDay, isPaymentScheduled, getUnpaidLabelText, getActiveStudents, isWithdrawnStudent, safeMutate, decodePaymentMemo, stripBillTags, useGrades, usePayments, revalidateGrades, revalidatePayments, getTodayString, injectPayment, swrFetcher, isBatchExcluded, isBatchExcludedNoBill, buildBillSettledSet, judgePrevMonthUnpaid, isOverdueUnsent } from '@/lib/utils'
 import { billingPhone } from '@/lib/student-codes'
 import { METHOD_OPTIONS_SHORT } from '@/lib/constants'
 import { getRegularTuitionTitle, getElectivesTuitionTitle, REGULAR_TUITION_MESSAGE } from '@/lib/billing-title'
 import { formatKst } from '@/lib/schedule'
+import { applyDefaultExpansion } from '@/lib/defaultExpansion'
 import { TERMINAL_STATUSES, IN_PROGRESS_STATUSES } from '@/lib/withdrawalStatuses'
 import { PaymentsSkeleton } from '@/components/Skeleton'
 import BillSendModal from '@/components/BillSendModal'
@@ -26,7 +28,10 @@ import BillActionModal from '@/components/BillActionModal'
 import StudentDetailModal from '@/components/StudentDetailModal'
 import WithdrawActionMenu, { type WithdrawActionTarget } from '@/components/WithdrawActionMenu'
 import AiFilterButton from '@/components/payments/AiFilterButton'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
+import { motion, usePaperReducedMotion, ICON_PRESS } from '@/components/paperMotion'
+import { hitSlopVars, SLOP_ROW_TRAILING, SLOP_ROW_SPLIT_FIRST, SLOP_ROW_SPLIT_LAST, SLOP_FAN_PILL, SLOP_FAN_MIDDLE, SLOP_FAN_LAST } from '@/lib/hitSlop'
+import { PullRefreshIndicator, usePullRefreshIndicator } from '@/components/PullRefreshIndicator'
 import { TButton } from '@/components/motion'
 import useSWR from 'swr'
 
@@ -67,11 +72,45 @@ interface QueueEntry {
   created_at: string
 }
 
-type PaymentFilter = 'all' | 'unpaid'
+interface MonthMemoSave {
+  month: string
+  updatedAt: string | null
+  pending: string | null
+  ready: boolean
+  running: boolean
+  conflict: boolean
+  timer: ReturnType<typeof setTimeout> | null
+}
+
+// SWR 결과가 아직 없을 때 쓰는 **고정** 빈 배열 (2026-09-27 동작품질 배치2 #2).
+// `data: x = []` 는 로딩 중 렌더마다 새 [] 를 만들어 → 그 배열에 기댄 memo(Map·Set·필터)가 매번 새로 생기고 →
+// 기본 펼침 effect 가 매 커밋 다시 돌아 setState → 또 렌더(검수 실측: 로딩 500ms 동안 커밋 59회 +
+// 'Maximum update depth' 경고). 참조가 고정이면 데이터가 실제로 올 때만 파생값이 바뀐다.
+// 얼려 둔다 — 누가 제자리 변경(push 등)을 하면 조용히 공유 상태가 오염되는 대신 바로 드러나게.
+const EMPTY: never[] = Object.freeze([]) as unknown as never[]
+
+// 명단 아이콘 버튼 터치 영역(#1) — 보이는 22px 는 그대로, 버튼 안 투명 가상 요소로 확장. 기하는 src/lib/hitSlop.ts.
+const HIT_ROW = hitSlopVars(SLOP_ROW_TRAILING)
+const HIT_SPLIT_FIRST = hitSlopVars(SLOP_ROW_SPLIT_FIRST)
+const HIT_SPLIT_LAST = hitSlopVars(SLOP_ROW_SPLIT_LAST)
+const HIT_FAN_PILL = hitSlopVars(SLOP_FAN_PILL)
+const HIT_FAN_MIDDLE = hitSlopVars(SLOP_FAN_MIDDLE)
+const HIT_FAN_LAST = hitSlopVars(SLOP_FAN_LAST)
 
 const FILTER_LABELS: Record<PaymentFilter, string> = {
   all: '전체',
   unpaid: '미납',
+  // 2026-09-12 운영자님 지시 — "날짜 지났는데 청구서 안 보낸 애들"을 한 번에 보고 일괄 발송
+  overdue_unsent: '청구지연',
+}
+
+/** 명단 줄 '지난달:' 표시용 — 결제선생 콜백이 붙인 [bill:…] 태그는 사람이 볼 이유가 없다(운영자님).
+ *  저장된 메모는 그대로(태그는 콜백 멱등·취소 판정에 쓰인다). 태그만 있던 메모면 결제수단 이름으로 대신 보여 준다. */
+function prevMemoLabel(memo: string, method: PaymentMethod | null): string {
+  const { cleanMemo } = decodePaymentMemo(memo)
+  if (cleanMemo) return cleanMemo
+  if (method === 'payssam' || method === 'remote' || /\[bill:/.test(memo)) return '결제선생'
+  return memo
 }
 
 export default function PaymentsPage() {
@@ -83,9 +122,9 @@ export default function PaymentsPage() {
   })
 
   const prevMonth = getPrevMonth(selectedMonth)
-  const { data: grades = [], error: gradesError, isLoading: gradesLoading } = useGrades<GradeWithClasses[]>()
-  const { data: payments = [], error: paymentsError, isLoading: paymentsLoading } = usePayments<Payment[]>(selectedMonth)
-  const { data: prevPayments = [], isLoading: prevPaymentsLoading } = usePayments<Payment[]>(prevMonth)
+  const { data: grades = EMPTY, error: gradesError, isLoading: gradesLoading } = useGrades<GradeWithClasses[]>()
+  const { data: payments = EMPTY, error: paymentsError, isLoading: paymentsLoading } = usePayments<Payment[]>(selectedMonth)
+  const { data: prevPayments = EMPTY, isLoading: prevPaymentsLoading } = usePayments<Payment[]>(prevMonth)
 
   const loading = gradesLoading || paymentsLoading
   const error = gradesError || paymentsError
@@ -120,8 +159,9 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
   const [editMemoColor, setEditMemoColor] = useState<string | null>(null)
   const [editPayMemoValue, setEditPayMemoValue] = useState('')
   const [bulkSaving, setBulkSaving] = useState(false)
-  const [bulkToolbarTop, setBulkToolbarTop] = useState(8)
+  // 다중선택 툴바 위치 — React 상태가 아니라 rAF 에서 요소 transform 으로 직접 쓴다 (2026-09-26 C08)
   const bulkToolbarRef = useRef<HTMLDivElement>(null)
+  const bulkToolbarTopRef = useRef(8)
   const touchRef = useRef<{
     startX: number; startY: number; currentX: number
     id: string; el: HTMLElement
@@ -142,12 +182,12 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
   const [withdrawMenuTarget, setWithdrawMenuTarget] = useState<WithdrawActionTarget | null>(null)
   // 처리완료 퇴원 섹션 접힘 토글 (default 접힘) — 2026-05-23 사용자 지시
   const [completedWithdrawnExpanded, setCompletedWithdrawnExpanded] = useState(false)
-  const [bulkBillTarget, setBulkBillTarget] = useState<{ cls: ClassWithStudents | null; className: string; targets: BulkBillTarget[]; studentClsMap?: Map<string, ClassWithStudents>; excludedNote?: string } | null>(null)
+  const [bulkBillTarget, setBulkBillTarget] = useState<{ className: string; targets: BulkBillTarget[]; studentClsMap?: Map<string, ClassWithStudents>; excludedNote?: string } | null>(null)
   // 일괄 재발송 (이미 sent 상태 + 결제일 지난 학생 알림 재푸시)
   const [bulkResendTarget, setBulkResendTarget] = useState<{ targets: BulkBillTarget[]; billIds: Map<string, string> } | null>(null)
 
   // 청구서 현황 (결제선생 발송/결제/취소 상태)
-  const { data: bills = [], mutate: mutateBills, isLoading: billsLoading } = useSWR<BillRecord[]>(
+  const { data: bills = EMPTY, mutate: mutateBills, isLoading: billsLoading } = useSWR<BillRecord[]>(
     `/api/billing?month=${selectedMonth}`,
     swrFetcher,
     { refreshInterval: 30000 }
@@ -156,7 +196,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
   // 지난달 청구서 — '지난달 미납' 배지 판정 보강용 (2026-08-27 카리나 건).
   // 이월 차감 등 조정 금액 청구(스냅샷 요금 < 청구액)를 완납한 학생이 스냅샷 대비 모자라
   // 미납으로 오판되던 것: 지난달 청구가 존재하고 전부 종결(paid 포함, sent 잔존 0)이면 완납 취급.
-  const { data: prevBills = [] } = useSWR<BillRecord[]>(
+  const { data: prevBills = EMPTY } = useSWR<BillRecord[]>(
     `/api/billing?month=${prevMonth}`,
     swrFetcher,
     { refreshInterval: 60000 }
@@ -165,7 +205,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
 
   // 월별 요금 스냅샷 — 과거 달 완납/미납 판정용. 요금 인상 후에도 과거 달 표시가 안 뒤바뀌게 (2026-07-02)
   // 과거 달만 스냅샷 사용, 현재/미래 달은 라이브 요금 (월 중 요금 수정이 즉시 반영되도록)
-  const { data: feeSnapshotRows = [], isLoading: feeSnapshotsLoading } = useSWR<{ student_id: string; month: string; fee: number }[]>(
+  const { data: feeSnapshotRows = EMPTY, isLoading: feeSnapshotsLoading } = useSWR<{ student_id: string; month: string; fee: number }[]>(
     `/api/fee-snapshots?months=${selectedMonth},${prevMonth}`,
     swrFetcher,
   )
@@ -250,7 +290,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
   }, [bills])
 
   // 퇴원생 월별 처리 상태 (이번달까지 정리 / 계좌환불 완료) — 학생 memo 대신 월별 독립 (2026-05-30)
-  const { data: withdrawalStatuses = [], mutate: mutateWithdrawalStatus, isLoading: withdrawalStatusLoading } = useSWR<{ student_id: string; status: string }[]>(
+  const { data: withdrawalStatuses = EMPTY, mutate: mutateWithdrawalStatus, isLoading: withdrawalStatusLoading } = useSWR<{ student_id: string; status: string }[]>(
     `/api/withdrawal-status?billing_month=${selectedMonth}`,
     swrFetcher,
     { refreshInterval: 30000 },
@@ -280,7 +320,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
   }, [grades])
 
   // 타임락 예약 큐 (pending 상태 — 영업시간 외 발송 요청)
-  const { data: queueEntries = [], isLoading: queueLoading } = useSWR<QueueEntry[]>(
+  const { data: queueEntries = EMPTY, isLoading: queueLoading } = useSWR<QueueEntry[]>(
     `/api/billing/queue?month=${selectedMonth}`,
     swrFetcher,
     { refreshInterval: 30000 }
@@ -355,104 +395,110 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
     return `${customStart ?? customEnd ?? ''}일`
   })()
 
-  // 결제일 picker (달력)
+  // 적용값은 페이지 소유, 달력 초안은 피커 인스턴스 소유(취소 시 폐기).
   const [dayPickerOpen, setDayPickerOpen] = useState(false)
-  const [tempStart, setTempStart] = useState<number | null>(null)
-  const [tempEnd, setTempEnd] = useState<number | null>(null)
-  const openDayPicker = useCallback(() => {
-    setTempStart(customStart)
-    setTempEnd(customEnd)
-    setDayPickerOpen(true)
-  }, [customStart, customEnd])
-  const handleDayPick = useCallback((day: number) => {
-    if (tempStart === null || (tempStart !== null && tempEnd !== null)) {
-      setTempStart(day)
-      setTempEnd(null)
-      return
-    }
-    // 시작일은 있고 종료일은 없는 상태
-    if (day === tempStart) {
-      setTempEnd(day)
-    } else {
-      const lo = Math.min(tempStart, day)
-      const hi = Math.max(tempStart, day)
-      setTempStart(lo)
-      setTempEnd(hi)
-    }
-  }, [tempStart, tempEnd])
-  const confirmDayPicker = useCallback(() => {
-    setCustomStart(tempStart)
-    setCustomEnd(tempEnd ?? tempStart)
+  const dayPickerButtonRef = useRef<HTMLButtonElement>(null)
+  const openDayPicker = useCallback(() => setDayPickerOpen(true), [])
+  const applyDayPicker = useCallback((value: DayFilterValue) => {
+    setPaymentFilter(value.filter)
+    setCustomStart(value.start)
+    setCustomEnd(value.end)
     setDayPickerOpen(false)
-  }, [tempStart, tempEnd])
+  }, [])
   const clearDayPicker = useCallback(() => {
-    setTempStart(null)
-    setTempEnd(null)
     setCustomStart(null)
     setCustomEnd(null)
+    setPaymentFilter(prev => prev === 'overdue_unsent' ? 'all' : prev)
     setDayPickerOpen(false)
   }, [])
   const [monthMemo, setMonthMemo] = useState('')
   // 로드 실패와 '메모 없음'을 구분 — 실패한 빈칸에 한 글자만 쳐도 서버 메모를 통째로 덮어쓴다 (2026-08-13 라인리뷰 P2)
-  const [monthMemoStatus, setMonthMemoStatus] = useState<'loading' | 'loaded' | 'failed'>('loading')
+  const [monthMemoStatus, setMonthMemoStatus] = useState<'loading' | 'loaded' | 'failed' | 'save_failed' | 'conflict'>('loading')
 
   // AI 필터 (검색요정)
   const [aiFilterIds, setAiFilterIds] = useState<Set<string> | null>(null)
   const [aiFilterDesc, setAiFilterDesc] = useState('')
   const [aiFilterLoading, setAiFilterLoading] = useState(false)
 
+  const monthMemoSaveRef = useRef<MonthMemoSave | null>(null)
+  const memoSaveChainRef = useRef<Promise<void>>(Promise.resolve())
+  const flushMonthMemo = useCallback((state: MonthMemoSave) => {
+    if (!state.ready || state.running || state.conflict || state.pending === null) return
+    state.running = true
+    // 완료 전에 입력이 바뀌면 pending 한 칸만 교체한다. 다음 PUT은 직전 응답의 버전으로 보낸다.
+    memoSaveChainRef.current = memoSaveChainRef.current.then(async () => {
+      try {
+        while (state.pending !== null && !state.conflict) {
+          const content = state.pending
+          state.pending = null
+          try {
+            const res = await fetch('/api/monthly-memo', {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ month: state.month, content, baseUpdatedAt: state.updatedAt }),
+            })
+            if (res.status === 409) {
+              // 새 서버 버전으로 자동 재전송하면 타 기기 내용을 다시 덮는다. 로컬 편집은 그대로 둔다.
+              state.conflict = true
+              if (monthMemoSaveRef.current === state) setMonthMemoStatus('conflict')
+              toast.error('다른 기기에서 수정됨 — 로컬 메모를 보관한 뒤 새로고침하세요')
+              break
+            }
+            if (!res.ok) throw new Error('월별 메모 저장 실패')
+            const data = await res.json()
+            state.updatedAt = data.updated_at
+            if (monthMemoSaveRef.current === state) setMonthMemoStatus('loaded')
+          } catch {
+            if (monthMemoSaveRef.current === state) setMonthMemoStatus('save_failed')
+            toast.error('월별 메모 저장 실패 — 편집 내용은 화면에 보존됩니다')
+          }
+        }
+      } finally {
+        state.running = false
+      }
+    })
+  }, [])
+
   // 월별 메모 로드 — DB에서 (기기 간 공유)
   useEffect(() => {
     let cancelled = false
+    const state: MonthMemoSave = { month: selectedMonth, updatedAt: null, pending: null, ready: false, running: false, conflict: false, timer: null }
+    monthMemoSaveRef.current = state
     setMonthMemoStatus('loading')
     ;(async () => {
       try {
+        // 월 이동 직전의 저장까지 완료 후 읽는다. 이전 월 응답은 새 월 내용·버전을 건드리지 않는다.
+        await memoSaveChainRef.current
+        if (cancelled) return
         const res = await fetch(`/api/monthly-memo?month=${selectedMonth}`)
         if (!res.ok) { if (!cancelled) { setMonthMemoStatus('failed'); toast.error('월별 메모를 불러오지 못했습니다 — 덮어쓰기 방지로 편집을 잠갔습니다') } ; return }
         const data = await res.json()
-        if (!cancelled) { setMonthMemo(data.content ?? ''); setMonthMemoStatus('loaded') }
+        if (!cancelled) {
+          state.updatedAt = data.updated_at ?? null
+          state.ready = true
+          setMonthMemo(data.content ?? '')
+          setMonthMemoStatus('loaded')
+        }
       } catch {
         if (!cancelled) { setMonthMemoStatus('failed'); toast.error('월별 메모를 불러오지 못했습니다 — 덮어쓰기 방지로 편집을 잠갔습니다') }
       }
     })()
-    return () => { cancelled = true }
-  }, [selectedMonth])
+    return () => {
+      cancelled = true
+      if (state.timer) clearTimeout(state.timer)
+      if (monthMemoSaveRef.current === state) monthMemoSaveRef.current = null
+      flushMonthMemo(state)
+    }
+  }, [selectedMonth, flushMonthMemo])
 
-  // 편집 디바운스 저장
-  const memoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const monthMemoStatusRef = useRef(monthMemoStatus)
-  useEffect(() => { monthMemoStatusRef.current = monthMemoStatus }, [monthMemoStatus])
+  // 편집 디바운스 저장 — 진행 중이면 최신 편집 하나만 대기.
   const saveMonthMemo = useCallback((content: string) => {
-    if (monthMemoStatusRef.current !== 'loaded') return // 로드 안 된 상태의 저장 = 서버 메모 덮어쓰기
-    if (memoSaveTimerRef.current) clearTimeout(memoSaveTimerRef.current)
-    memoSaveTimerRef.current = setTimeout(() => {
-      fetch('/api/monthly-memo', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ month: selectedMonth, content }),
-      }).catch(err => console.warn('[payments] 월별 메모 자동저장 실패', err))
-    }, 500)
-  }, [selectedMonth])
-
-  // 월별 메모 스크롤 연동 (스크롤 시 1줄 축소)
-  const [memoScrolled, setMemoScrolled] = useState(false)
-  const [memoFocused, setMemoFocused] = useState(false)
-  const memoCompact = memoScrolled && !memoFocused
-
-  // 메모 자연 높이 측정 (확장 상태에서의 target height)
-  const memoSizerRef = useRef<HTMLDivElement>(null)
-  const [memoNaturalH, setMemoNaturalH] = useState(82)
-  useLayoutEffect(() => {
-    if (!memoSizerRef.current) return
-    const h = memoSizerRef.current.scrollHeight
-    setMemoNaturalH(Math.min(400, Math.max(82, h)))
-  }, [monthMemo])
-
-  useEffect(() => {
-    const onScroll = () => setMemoScrolled(window.scrollY > 80)
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
-  }, [])
+    const state = monthMemoSaveRef.current
+    if (!state?.ready || state.month !== selectedMonth) return // 로드 안 된 상태의 저장 = 서버 메모 덮어쓰기
+    state.pending = content
+    if (state.timer) clearTimeout(state.timer)
+    if (!state.running) state.timer = setTimeout(() => flushMonthMemo(state), 500)
+  }, [selectedMonth, flushMonthMemo])
 
   const fetchData = useCallback(() => {
     revalidateGrades()
@@ -582,15 +628,70 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
       return dueDays.some(d => d >= min && d <= max)
     }
     if (paymentFilter === 'all') return true
+    if (paymentFilter === 'overdue_unsent') {
+      // 🔴 결제일과 청구 상태는 **같은 청구 유형끼리** 봐야 한다 (2026-09-12 코드 검수 P2).
+      // 정규는 5일·발송완료, 선택과목은 20일·미발송인 학생을 12일에 보면
+      // '지난 결제일(정규) + 미발송(선택)'을 섞어 지연으로 잘못 잡는다 — 실제 늦은 청구서는 없다.
+      const hasPayments = (paymentsByStudentId.get(s.id) ?? []).length > 0
+      const totalFee = feeForMonth(s.id, selectedMonth, getStudentFee(s, cls))
+      const regularOverdue = isOverdueUnsent({
+        duePassed: !isPaymentScheduled(s, selectedMonth, regularDue),
+        billStatus: getBillStatus(s.id, 'regular'),
+        hasPayments,
+        // 분할 결제일 학생의 정규분은 선택과목비를 뺀 금액이 청구 대상이다
+        fee: split ? getStudentBaseFee(s, cls) : totalFee,
+      })
+      if (regularOverdue) return true
+      if (!split || electivesDue === null) return false
+      return isOverdueUnsent({
+        duePassed: !isPaymentScheduled(s, selectedMonth, electivesDue),
+        billStatus: getBillStatus(s.id, 'electives'),
+        hasPayments,
+        fee: getStudentElectivesFee(s),
+      })
+    }
     if (paymentFilter === 'unpaid') {
       const paid = (paymentsByStudentId.get(s.id) ?? []).reduce((sum, p) => sum + p.amount, 0)
-      const status = getPaymentStatus(paid, getStudentFee(s, cls))
+      const status = getPaymentStatus(paid, feeForMonth(s.id, selectedMonth, getStudentFee(s, cls)))
       if (status === 'paid') return false
       if (status === 'unpaid' && isPaymentScheduled(s, selectedMonth, s.payment_due_day ?? undefined)) return false
       return true
     }
     return true
-  }, [aiFilterIds, customStart, customEnd, paymentFilter, paymentsByStudentId, selectedMonth])
+  // isPaymentScheduled가 내부에서 Date를 읽는다. 날짜가 바뀌면 명단/반 집계도 다시 평가한다.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiFilterIds, customStart, customEnd, paymentFilter, paymentsByStudentId, selectedMonth, feeForMonth, getBillStatus, today])
+
+  // 달력은 현재 범위/전체·미납에 종속되지 않는다. 일반 행과 같은 재원 범위 + AI 교집합.
+  // passesFilter의 지연 판정 입력을 그대로 사용하며 두 유형의 날짜를 각각 수집한다.
+  const overdueCalendar = useMemo(() => {
+    const ids = new Set<string>()
+    const days = new Set<number>()
+    const adjustedDays = new Set<number>()
+    const [year, month] = selectedMonth.split('-').map(Number)
+    const lastDay = new Date(year, month, 0).getDate()
+    // today는 날짜 경과 후 재진입의 캐시 키. isPaymentScheduled도 현재 날짜를 읽는다.
+    for (const s of allStudents) {
+      if (s.withdrawal_date || (aiFilterIds !== null && !aiFilterIds.has(s.id))) continue
+      const cls = s.class
+      const split = hasSplitDueDays(s)
+      const regularDue = s.payment_due_day ?? getPaymentDueDay(s)
+      const hasPayments = (paymentsByStudentId.get(s.id) ?? []).length > 0
+      const totalFee = feeForMonth(s.id, selectedMonth, getStudentFee(s, cls))
+      const add = (day: number, billType: 'regular' | 'electives', fee: number) => {
+        if (!isOverdueUnsent({
+          duePassed: !isPaymentScheduled(s, selectedMonth, day),
+          billStatus: getBillStatus(s.id, billType), hasPayments, fee,
+        })) return
+        ids.add(s.id)
+        days.add(Math.min(day, lastDay))
+        if (day > lastDay) adjustedDays.add(day)
+      }
+      add(regularDue, 'regular', split ? getStudentBaseFee(s, cls) : totalFee)
+      if (split) add(s.electives_payment_due_day!, 'electives', getStudentElectivesFee(s))
+    }
+    return { days, studentCount: ids.size, adjustedDays, asOf: today }
+  }, [allStudents, aiFilterIds, paymentsByStudentId, getBillStatus, feeForMonth, selectedMonth, today])
 
   const sendOneBill = useCallback(async (student: Student, cls: ClassWithStudents): Promise<'sent' | 'scheduled' | 'failed'> => {
     const phone = billingPhone(student)
@@ -627,7 +728,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
           studentName: student.name,
           phone: cleanPhone,
           amount: regularAmount,
-          // 분리발송의 정규 건은 정규분만 — 제목에 "+확통" 붙이지 않기 (선택과목은 별건, 2026-07-10 msg 3551)
+          // 분리발송의 정규 건은 정규분만 — 제목에 "+확통" 붙이지 않기 (선택과목은 별건, 2026-07-10)
           productName: getRegularTuitionTitle(cls.subject, selectedMonth, cls.name, null),
           message: REGULAR_TUITION_MESSAGE,
           billingMonth: selectedMonth,
@@ -669,44 +770,12 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
     return 'failed'
   }, [selectedMonth])
 
-  const openBulkBillModal = useCallback((cls: ClassWithStudents) => {
-    const classStudents = getActiveStudents(cls.students ?? [], selectedMonth).filter(s => passesFilter(s, cls))
-    const prevUnpaidNames: string[] = []
-    const eligible = classStudents.filter(s => {
-      const phone = billingPhone(s)
-      const fee = getStudentFee(s, cls)
-      // 다른 결제수단으로 이미 선결제 완료된 학생은 제외
-      const alreadyPaid = (paymentsByStudentId.get(s.id) ?? []).length > 0
-      // 이 달만 일괄 제외 지정된 학생(초과결제 차감 등 개별발송 필요) 제외
-      if (isBatchExcluded(s, selectedMonth)) return false
-      if (!(phone && fee > 0 && !billByStudent.has(s.id) && !alreadyPaid)) return false
-      // 지난달 미납 학생은 일괄에서 제외 — 미납분 정리(재청구·독촉)가 먼저다 (2026-08-27 운영자님 지시)
-      if (isPrevMonthUnpaid(s, fee)) { prevUnpaidNames.push(s.name); return false }
-      return true
-    })
-    if (eligible.length === 0) return
-    const targets: BulkBillTarget[] = eligible.map(s => ({
-      studentId: s.id,
-      studentName: s.name,
-      className: formatClassName(cls),
-      amount: getStudentFee(s, cls),
-    }))
-    setBulkBillTarget({
-      cls, className: formatClassName(cls), targets,
-      excludedNote: prevUnpaidNames.length ? `지난달 미납 ${prevUnpaidNames.length}명 제외: ${prevUnpaidNames.join('·')}` : undefined,
-    })
-  }, [selectedMonth, passesFilter, billByStudent, paymentsByStudentId, isPrevMonthUnpaid])
-
   const executeBulkSend = useCallback(async () => {
     if (!bulkBillTarget) return
-    const { cls, targets, studentClsMap } = bulkBillTarget
+    const { targets, studentClsMap } = bulkBillTarget
 
-    // 단일반 bulk(cls 있음) vs 필터 전체 bulk(studentClsMap 있음) 구분
     const items: Array<{ student: Student; cls: ClassWithStudents }> = []
-    if (cls) {
-      const eligible = (cls.students ?? []).filter(s => targets.some(t => t.studentId === s.id))
-      for (const s of eligible) items.push({ student: s, cls })
-    } else if (studentClsMap) {
+    if (studentClsMap) {
       for (const t of targets) {
         const c = studentClsMap.get(t.studentId)
         const s = c?.students?.find(st => st.id === t.studentId)
@@ -714,12 +783,11 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
       }
     }
 
-    const batchId = cls?.id ?? '__filter__'
     setBulkBillTarget(null)
 
     cancelBatchRef.current = false
     setCancellingBatch(false)
-    setBatchSending(batchId)
+    setBatchSending('__filter__')
     setBatchProgress({ done: 0, total: items.length })
 
     const counts = { sent: 0, scheduled: 0, failed: 0 }
@@ -932,6 +1000,10 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
     const targets: BulkBillTarget[] = []
     const studentClsMap = new Map<string, ClassWithStudents>()
     const prevUnpaidNames: string[] = []
+    // 정규 청구서는 이미 나갔고 **선택과목분만** 늦은 학생 — 일괄은 정규 기준으로 도니 여기서 빠진다.
+    // 그대로 태우면 정규 청구서가 한 장 더 나간다(sendOneBill 은 분할 결제일 학생에게 정규+선택을 함께 보낸다).
+    // 그래서 제외하되 **누가 빠졌는지 모달에 적어** 개별 발송으로 넘긴다. (2026-09-12 코드 검수 P2)
+    const electivesOnlyNames: string[] = []
     for (const grade of grades) {
       for (const cls of grade.classes ?? []) {
         const classStudents = getActiveStudents(cls.students ?? [], selectedMonth).filter(s => passesFilter(s, cls as ClassWithStudents))
@@ -941,6 +1013,9 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
           // 다른 결제수단으로 이미 선결제 완료된 학생은 제외
           const alreadyPaid = (paymentsByStudentId.get(s.id) ?? []).length > 0
           if (isBatchExcluded(s, selectedMonth)) continue // 이 달만 일괄 제외 지정
+          if (paymentFilter === 'overdue_unsent' && phone && fee > 0 && !alreadyPaid && billByStudent.has(s.id)) {
+            electivesOnlyNames.push(s.name)
+          }
           if (!phone || fee <= 0 || billByStudent.has(s.id) || alreadyPaid) continue
           // 지난달 미납 학생은 일괄에서 제외 (2026-08-27 운영자님 지시)
           if (isPrevMonthUnpaid(s, fee)) { prevUnpaidNames.push(s.name); continue }
@@ -954,14 +1029,24 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
         }
       }
     }
-    if (targets.length === 0) return
+    if (targets.length === 0) {
+      // 어제 만든 안내(excludedNote)는 모달 안에 있었다 — 대상이 전원 '선택과목분만 지연'이면
+      // 모달이 안 열려 안내에 도달할 길이 없었다. 그 경우 명단을 토스트로 직접 띄운다.
+      // (2026-09-13 코드 검수 High)
+      if (electivesOnlyNames.length) {
+        toast.info(`선택과목분만 지연된 ${electivesOnlyNames.length}명은 일괄로 못 보냅니다 — 개별 발송: ${electivesOnlyNames.join('·')}`)
+      }
+      return
+    }
     const labelPrefix = customActive ? customLabel : FILTER_LABELS[paymentFilter]
     setBulkBillTarget({
-      cls: null,
       className: `${labelPrefix} 일괄`,
       targets,
       studentClsMap,
-      excludedNote: prevUnpaidNames.length ? `지난달 미납 ${prevUnpaidNames.length}명 제외: ${prevUnpaidNames.join('·')}` : undefined,
+      excludedNote: [
+        prevUnpaidNames.length ? `지난달 미납 ${prevUnpaidNames.length}명 제외: ${prevUnpaidNames.join('·')}` : '',
+        electivesOnlyNames.length ? `선택과목분만 지연된 ${electivesOnlyNames.length}명은 개별 발송: ${electivesOnlyNames.join('·')}` : '',
+      ].filter(Boolean).join(' / ') || undefined,
     })
   }, [grades, selectedMonth, passesFilter, billByStudent, paymentFilter, paymentsByStudentId, customActive, customLabel, isPrevMonthUnpaid])
 
@@ -995,7 +1080,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
         // '이 달만 일괄 제외 + 청구 없음'만 분모에서 뺀다 — 행 배지의 '이달 청구없음' 판정과
         // **같은 헬퍼**(isBatchExcludedNoBill)를 쓴다. 제외월이어도 개별 청구가 나갔으면 분모에
         // 남아야 한다: 무조건 빼면 그 학생이 빨간 미납인데 반은 완납으로 접혀 미납자가 숨는다
-        // (2026-08-05 정국 — 배지 1cf9f0d 와 분모 77fd71c 기준이 갈려 생긴 실회귀, amnesia 검수).
+        // (2026-08-05 정국 — 배지 1cf9f0d 와 분모 77fd71c 기준이 갈려 생긴 실회귀, 코드 검수).
         const filtered = active
           .filter(s => {
             const slots = billsByStudent.get(s.id)
@@ -1024,59 +1109,61 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
     return map
   }, [grades, selectedMonth, passesFilter, paymentsByStudentId, feeForMonth, billsByStudent])
 
+  // 명단 표시 가드 — 아래 렌더에서도 쓴다.
+  // billsLoading 포함: 청구서 상태가 늦게 오면 결제완료 건이 잠깐 미발송 아이콘으로 보여 재발송 오판 유발 (2026-07-02)
+  // feeSnapshotsLoading 포함: 과거 달 진입 시 스냅샷 도착 전 라이브(인상된) 요금으로 판정돼
+  // 완납 학생이 잠깐 미납으로 깜빡임 (rule.swr_loading_guard, 2026-07-10 전수점검)
+  const dataLoading = loading || billsLoading || feeSnapshotsLoading || withdrawalStatusLoading || queueLoading
+
   // 기본: 보이는 반 전부 펼침 + 전원납부 완료 반은 자동 접힘
   useEffect(() => {
     const allIds = visibleSections.flatMap(s => s.classIds)
     if (allIds.length === 0) return
-    setExpandedClasses(prev => {
-      const next = new Set(prev)
-      for (const id of allIds) {
-        const stat = classStats.get(id)
-        if (stat?.isFullyPaid) next.delete(id)
-        else next.add(id)
-      }
-      return next
-    })
+    // 바뀐 게 없으면 같은 Set 을 돌려받아 React 가 재렌더를 건너뛴다(#2 — 예전엔 매번 새 Set).
+    // 규칙(미납 반 펼침·완납 반 접힘)은 그대로다.
+    setExpandedClasses(prev => applyDefaultExpansion(prev, allIds.map(id => [id, !!classStats.get(id)?.isFullyPaid] as const)))
   }, [visibleSections, classStats])
 
-  // 스티키 헤더 높이를 CSS 변수로 주입 → 학년 헤더가 그 아래로 스틱
-  // memoCompact 전환 시 페인트 전 동기 갱신 → 학년바와 메모 사이 gap 차단
-  useLayoutEffect(() => {
-    const update = () => {
-      const el = document.querySelector('[data-sticky-header]') as HTMLElement | null
-      if (!el) return
-      const h = el.getBoundingClientRect().height
-      document.documentElement.style.setProperty('--grade-sticky-top', `${Math.max(0, h + 56)}px`)
+  // 2026-09-26 C05 — 명단이 **처음 나타나는 렌더**에 기본 펼침이 이미 들어가 있게 한다.
+  // 위 effect 는 페인트 **후**에 돌아서, 명단이 먼저 접힌(또는 이전 달 상태) 채 그려진 뒤 반 20여 개가 동시에
+  // 높이 애니메이션을 했다(튕김·CLS). 데이터가 다 온 첫 렌더에서 한 번만 렌더 도중 상태를 맞춘다
+  // (React '렌더 중 상태 조정' 패턴 → 커밋 전 재렌더). 반의 AnimatePresence initial={false} 라 첫 등장은
+  // 애니메이션이 없다. 로딩(월 이동)으로 돌아가면 다시 무장한다. 이후 데이터 변화의 재적용은 위 effect 그대로.
+  // 플래그로 한 번만 도는 조건이라 입력 참조가 매 렌더 바뀌어도 렌더 루프가 생기지 않는다.
+  const [firstRevealApplied, setFirstRevealApplied] = useState(false)
+  if (dataLoading) {
+    if (firstRevealApplied) setFirstRevealApplied(false)
+  } else if (!firstRevealApplied) {
+    const allIds = visibleSections.flatMap(s => s.classIds)
+    if (allIds.length > 0) {
+      setFirstRevealApplied(true)
+      setExpandedClasses(prev => applyDefaultExpansion(prev, allIds.map(id => [id, !!classStats.get(id)?.isFullyPaid] as const)))
     }
-    update()
-    const el = document.querySelector('[data-sticky-header]')
-    const ro = el ? new ResizeObserver(update) : null
-    if (el && ro) ro.observe(el)
-    window.addEventListener('resize', update)
-    return () => {
-      ro?.disconnect()
-      window.removeEventListener('resize', update)
-    }
-  }, [memoCompact])
+  }
 
-  // 학생 행 펼침 시 자동 스크롤 — 우측 아이콘(Send/Mail/수납)이 화면 밖으로 밀리지 않게
+  // 학생 행 펼침 시 자동 스크롤 — 우측 아이콘(Send/Mail/수납)이 화면 밖으로 밀리지 않게.
+  // 2026-09-26 C05: 예전엔 120ms 타이머로 320ms 높이 애니메이션 **도중**에 재서 최종 높이를 과소 측정했고
+  // 두 움직임(높이·부드러운 스크롤)이 겹쳤다. 지금은 인라인 폼 높이 애니메이션이 **끝난 뒤**
+  // (onAnimationComplete) 한 번 잰다. 동작 줄이기에선 애니메이션이 없으므로 다음 프레임에 잰다.
+  const reducedMotion = usePaperReducedMotion()
+  const revealExpandedRow = useCallback((studentId: string) => {
+    const el = document.querySelector(`[data-student-row="${studentId}"]`) as HTMLElement | null
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const viewportH = window.innerHeight
+    const isMobile = !window.matchMedia('(min-width: 640px)').matches
+    const bottomNavH = isMobile ? 80 : 0
+    const desiredBottom = viewportH - bottomNavH
+    const margin = 8
+    if (rect.bottom > desiredBottom) {
+      window.scrollBy({ top: rect.bottom - desiredBottom + margin, behavior: reducedMotion ? 'auto' : 'smooth' })
+    }
+  }, [reducedMotion])
   useEffect(() => {
-    if (!expandedStudentId) return
-    const timer = setTimeout(() => {
-      const el = document.querySelector(`[data-student-row="${expandedStudentId}"]`) as HTMLElement | null
-      if (!el) return
-      const rect = el.getBoundingClientRect()
-      const viewportH = window.innerHeight
-      const isMobile = !window.matchMedia('(min-width: 640px)').matches
-      const bottomNavH = isMobile ? 80 : 0
-      const desiredBottom = viewportH - bottomNavH
-      const margin = 8
-      if (rect.bottom > desiredBottom) {
-        window.scrollBy({ top: rect.bottom - desiredBottom + margin, behavior: 'smooth' })
-      }
-    }, 120)
-    return () => clearTimeout(timer)
-  }, [expandedStudentId])
+    if (!expandedStudentId || !reducedMotion) return
+    const frame = requestAnimationFrame(() => revealExpandedRow(expandedStudentId))
+    return () => cancelAnimationFrame(frame)
+  }, [expandedStudentId, reducedMotion, revealExpandedRow])
 
   // 펼쳐진 팬(fan) 외부 클릭 시 닫기 — 단, 날짜/결제수단 피커 포탈은 제외
   useEffect(() => {
@@ -1129,9 +1216,13 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
         const rect = el.getBoundingClientRect()
         if (rect.top < topY) topY = rect.top
       }
-      if (!isFinite(topY)) return
-      const h = bulkToolbarRef.current?.offsetHeight ?? 50
-      setBulkToolbarTop(Math.max(topY - h - 6, 8))
+      const el = bulkToolbarRef.current
+      if (isFinite(topY)) {
+        const h = el?.offsetHeight ?? 50
+        bulkToolbarTopRef.current = Math.max(topY - h - 6, 8)
+      }
+      // 스크롤 프레임마다 페이지 전체를 다시 그리던 setState(top) 대신 transform 만 쓴다(레이아웃 없음)
+      if (el) el.style.transform = `translate3d(0, ${bulkToolbarTopRef.current}px, 0)`
     }
     const schedule = () => {
       if (rafId !== null) return
@@ -1366,8 +1457,8 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
     setInlineMethod(prevM && prevM !== 'payssam' ? prevM : 'card')
     setShowMethodPicker(false)
     setShowDatePicker(false)
-    const prev = getPrevMemo(studentId)
-    setInlineMemo(prev ?? '')
+    const prev = stripBillTags(getPrevMemo(studentId)) // 지난달 결제선생 태그는 수동 납부로 복사하지 않는다(2026-09-27, verifier)
+    setInlineMemo(prev)
     setInlineMemoFromPrev(!!prev)
   }
 
@@ -1444,8 +1535,13 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
   // ─── Pull-to-refresh ──────────────────────────────────────
   // 공용 훅으로 대체 — 인라인 구현엔 try/finally가 없어 refresh 실패 시 스피너가 멈춰있던 잠재버그도 함께 해소.
   const PULL_THRESHOLD = 60
-  const { containerRef, pullDistance, isRefreshing } = usePullToRefresh({
+  // 표시(컨테이너 translate·아이콘 회전/크기/투명도)는 rAF 에서 DOM 에 직접 쓴다 — touchmove 마다
+  // 페이지 전체를 다시 그리던 것 제거(2026-09-26 C07). 임계·새로고침 흐름은 그대로.
+  const pullVisual = usePullRefreshIndicator(PULL_THRESHOLD)
+  const { containerRef, isRefreshing } = usePullToRefresh({
     onRefresh: async () => { fetchData() },
+    threshold: PULL_THRESHOLD,
+    onPull: pullVisual.onPull,
   })
 
   // ─── Student add ────────────────────────────────────────────
@@ -1464,17 +1560,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
   }
 
   // ─── Render ───────────────────────────────────────────────────
-  // billsLoading 포함: 청구서 상태가 늦게 오면 결제완료 건이 잠깐 미발송 아이콘으로 보여 재발송 오판 유발 (2026-07-02)
-  // feeSnapshotsLoading 포함: 과거 달 진입 시 스냅샷 도착 전 라이브(인상된) 요금으로 판정돼
-  // 완납 학생이 잠깐 미납으로 깜빡임 (rule.swr_loading_guard, 2026-07-10 전수점검)
-  if (loading || billsLoading || feeSnapshotsLoading || withdrawalStatusLoading || queueLoading) return <PaymentsSkeleton />
-
-  if (error) return (
-    <div className="text-center py-12">
-      <p className="text-[var(--red)] mb-4">{error?.message || '데이터 로딩 실패'}</p>
-      <TButton onClick={fetchData} className="px-4 py-2 bg-[var(--blue)] text-white rounded-lg hover:opacity-90">다시 시도</TButton>
-    </div>
-  )
+  // (dataLoading 은 위 '명단 표시 가드'에서 계산 — 기본 펼침 첫 적용과 같은 값을 쓴다)
 
   // 학생 1줄 렌더 — 일반 반 목록 + 퇴원 "처리중/처리완료" 반에서 동일하게 재사용 (2026-05-30 사용자 지시)
   // classLabel: 퇴원 반처럼 여러 학년·반이 섞일 때 이름 옆에 원래 학년·반 표시
@@ -1506,7 +1592,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                       const displayColors = feeUnset || (batchExcluded && status === 'unpaid')
                         ? { bg: 'var(--bg-elevated)', text: 'var(--text-3)' }
                         : electivesOnlyPaid
-                        ? { bg: 'var(--orange-dim)', text: 'var(--orange)' }
+                        ? { bg: 'var(--orange-dim)', text: 'var(--scheduled-text)' }
                         : scheduled ? { bg: 'var(--scheduled-bg)', text: 'var(--scheduled-text)' } : PAYMENT_STATUS_COLORS[status]
                       let displayLabel = ''
                       if (batchExcluded && status === 'unpaid') {
@@ -1543,7 +1629,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                       const isMultiSelect = selectedMemoIds.size >= 2
                       const isSoleMemoSelection = isMemoSelected && selectedMemoIds.size === 1
                       const memoColor = student.memo_color ?? null
-                      const nameHighlight = memoColor === 'yellow' ? 'bg-[var(--orange-dim)] text-[var(--orange)] px-2 py-0.5'
+                      const nameHighlight = memoColor === 'yellow' ? 'bg-[var(--orange-dim)] text-[var(--scheduled-text)] px-2 py-0.5'
                         : memoColor === 'green' ? 'bg-[var(--paid-bg)] text-[var(--paid-text)] px-2 py-0.5'
                         : memoColor === 'red' ? 'bg-[var(--unpaid-bg)] text-[var(--unpaid-text)] px-2 py-0.5'
                         : ''
@@ -1573,14 +1659,14 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                         const queueEntry = queuesByStudent.get(st.id)?.[billType]
                         const scheduledAtKst = queueEntry ? formatKst(new Date(queueEntry.scheduled_at)) : null
                         const labelPrefix = isSplit ? (billType === 'electives' ? '선택과목 ' : '정규 ') : ''
-                        // 분할발송에서 한쪽만 paid면 노란색, 둘 다 paid면 파란색 (사양: msg 1450)
+                        // 분할발송에서 한쪽만 paid면 노란색, 둘 다 paid면 파란색
                         const partialPaid = isSplit && billStatus === 'paid' && !(electivesPaid && regularPaid)
                         const styles: Record<BillStatus, { fg: string; bg: string; title: string }> = {
                           unsent:    { fg: 'var(--text-4)', bg: 'var(--bg-elevated)', title: `${labelPrefix}카톡 청구서 발송` },
-                          sent:      { fg: 'var(--orange)', bg: 'var(--orange-dim)',  title: `${labelPrefix}발송됨 — 탭하여 파기` },
-                          scheduled: { fg: 'var(--orange)', bg: 'var(--orange-dim)',  title: scheduledAtKst ? `${labelPrefix}타임락 예약 — ${scheduledAtKst} KST 자동 발송` : `${labelPrefix}타임락 예약됨` },
+                          sent:      { fg: 'var(--scheduled-text)', bg: 'var(--orange-dim)',  title: `${labelPrefix}발송됨 — 탭하여 파기` },
+                          scheduled: { fg: 'var(--scheduled-text)', bg: 'var(--orange-dim)',  title: scheduledAtKst ? `${labelPrefix}타임락 예약 — ${scheduledAtKst} KST 자동 발송` : `${labelPrefix}타임락 예약됨` },
                           paid:      partialPaid
-                            ? { fg: 'var(--orange)', bg: 'var(--orange-dim)', title: `${labelPrefix}결제완료 — 탭하여 취소` }
+                            ? { fg: 'var(--scheduled-text)', bg: 'var(--orange-dim)', title: `${labelPrefix}결제완료 — 탭하여 취소` }
                             : { fg: 'var(--blue)', bg: 'var(--blue-dim)', title: `${labelPrefix}수납 완료 — 탭하여 취소` },
                           cancelled: { fg: 'var(--red)',    bg: 'var(--red-dim)',     title: `${labelPrefix}결제 취소됨 — 탭하여 재발송` },
                           destroyed: { fg: 'var(--red)',     bg: 'var(--red-dim)',     title: `${labelPrefix}청구서 파기됨 — 탭하여 재발송` },
@@ -1594,8 +1680,9 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                           ? (billType === 'electives' ? getStudentElectivesFee(st) : getStudentBaseFee(st, c))
                           : fee
                         return (
-                          <button
+                          <motion.button
                             key={billType}
+                            whileTap={ICON_PRESS}
                             onClick={(e) => {
                               e.stopPropagation()
                               if (billStatus === 'scheduled') return
@@ -1619,14 +1706,14 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                   amount: sendAmount,
                                   subject: c.subject ?? null,
                                   className: c.name ?? null,
-                                  // 분리발송의 정규 건 제목에 "+확통" 방지 — 금액에 선택과목이 포함될 때만 전달 (2026-07-10 msg 3551)
+                                  // 분리발송의 정규 건 제목에 "+확통" 방지 — 금액에 선택과목이 포함될 때만 전달 (2026-07-10)
                                   electives: isSplit && billType === 'regular' ? [] : (st.electives ?? []),
                                   billType,
                                 })
                               }
                             }}
-                            className="relative p-1 rounded-lg shrink-0 hover:opacity-80 active:scale-95 transition-[color,background-color,transform] duration-300 flex items-center justify-center overflow-visible"
-                            style={{ color: sty.fg, backgroundColor: sty.bg }}
+                            className="hit-slop p-1 rounded-lg shrink-0 hover:opacity-80 transition-[color,background-color] duration-300 flex items-center justify-center overflow-visible"
+                            style={{ color: sty.fg, backgroundColor: sty.bg, ...(isSplit ? (billType === 'regular' ? HIT_SPLIT_FIRST : HIT_SPLIT_LAST) : HIT_ROW) }}
                             aria-label={showBadge ? `${sty.title} — 재발송 ${resendCount}회` : sty.title}
                             title={showBadge ? `${sty.title} · 재발송 ${resendCount}회` : sty.title}
                           >
@@ -1663,7 +1750,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                             {billStatus === 'scheduled' && (
                               <span
                                 className="absolute -bottom-1 -right-1 w-[12px] h-[12px] rounded-full flex items-center justify-center animate-fade-in"
-                                style={{ background: 'var(--orange)', color: 'white' }}
+                                style={{ background: 'var(--orange)', color: 'var(--on-action)' }}
                                 aria-hidden
                               >
                                 <Clock className="w-[8px] h-[8px]" strokeWidth={3} />
@@ -1672,7 +1759,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                             {showBadge && (
                               <span
                                 className="absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full flex items-center justify-center text-[9px] font-bold leading-none animate-fade-in"
-                                style={{ background: 'var(--red)', color: 'white' }}
+                                style={{ background: 'var(--red)', color: 'var(--on-action)' }}
                                 aria-hidden
                               >
                                 {resendCount}
@@ -1681,14 +1768,14 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                             {showSmsBadge && billStatus !== 'scheduled' && (
                               <span
                                 className="absolute -bottom-1 -right-1 min-w-[14px] h-[7px] px-[2px] rounded-[2px] flex items-center justify-center font-bold leading-none tracking-tight animate-fade-in"
-                                style={{ background: 'var(--blue)', color: 'white', fontSize: '5.5px' }}
+                                style={{ background: 'var(--blue)', color: 'var(--on-action)', fontSize: '5.5px' }}
                                 title={smsCount > 1 ? `미납 안내 문자 ${smsCount}회 발송` : '미납 안내 문자 발송됨'}
                                 aria-label={smsCount > 1 ? `미납 안내 문자 ${smsCount}회 발송됨` : '미납 안내 문자 발송됨'}
                               >
                                 SMS
                               </span>
                             )}
-                          </button>
+                          </motion.button>
                         )
                       }
 
@@ -1714,7 +1801,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                           key={c}
                                           type="button"
                                           onClick={() => setEditMemoColor(active ? null : c)}
-                                          className={`w-6 h-3 rounded-[2px] ${bg} ${active ? 'ring-1 ring-white/70 shadow-md' : 'opacity-60'}`}
+                                          className={`w-6 h-3 rounded-[2px] ${bg} ${active ? 'ring-1 ring-[var(--text-1)] shadow-md' : 'opacity-60'}`}
                                           style={{ transform: 'skewX(-10deg)' }}
                                           aria-label={`색상 ${c}`}
                                         />
@@ -1730,7 +1817,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
 
                             {/* 오른쪽 패널 헤더 — "결제특이사항" 배지 + 저장 */}
                             <div data-edit-panel className="absolute inset-y-0 right-0 w-[150px] flex items-center justify-between gap-1.5 px-2 bg-[var(--bg-elevated)]" onClick={e => e.stopPropagation()}>
-                              <span className="text-[10px] font-bold text-[var(--orange)] px-2 py-0.5 rounded-full bg-[var(--orange-dim)] shrink-0">결제특이사항</span>
+                              <span className="text-[10px] font-bold text-[var(--scheduled-text)] px-2 py-0.5 rounded-full bg-[var(--orange-dim)] shrink-0">결제특이사항</span>
                               <TButton onClick={() => handleSavePayMemo(student.id)} className="p-1.5 bg-[var(--blue-bg)] hover:bg-[var(--blue-dim)] text-[var(--blue)] rounded-full shrink-0 transition-colors" aria-label="저장">
                                 <Check className="w-3.5 h-3.5" strokeWidth={3} />
                               </TButton>
@@ -1746,7 +1833,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                               onPointerCancel={handleTouchEnd}
                               style={{ transform: `translateX(${rowOffset(student.id)}px)`, transition: SPRING, touchAction: 'pan-y', userSelect: 'none', WebkitUserSelect: 'none' }}
                             >
-                            <div className={`flex items-center gap-2 px-4 ${hasMemo && !isExpanded ? 'pt-1.5 pb-0.5' : 'py-1.5'} ${
+                            <div className={`flex items-center gap-2 px-4 py-0 ${
                               status === 'unpaid' && !isExpanded && !withdrawn ? 'cursor-pointer active:bg-[var(--bg-card-hover)]' : ''
                             } ${withdrawn ? 'opacity-60' : ''}`}
                               onClick={status === 'unpaid' && !isExpanded && !withdrawn ? () => handleExpand(student.id) : undefined}
@@ -1790,7 +1877,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                 {!withdrawn && !(student.payssam_recipient === 'father'
                                   ? (student.parent_father_phone || student.parent_phone)
                                   : (student.parent_phone || student.parent_father_phone)) && (
-                                  <span className="text-[9px] ml-1 px-1 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--orange)] font-bold" title="보호자 연락처 미등록">📵</span>
+                                  <span className="text-[9px] ml-1 px-1 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--scheduled-text)] font-bold" title="보호자 연락처 미등록">📵</span>
                                 )}
                                 {!withdrawn && !(student.school ?? '').trim() && (
                                   <span className="text-[9px] ml-1 px-1 py-0.5 rounded-full bg-[var(--blue-dim)] text-[var(--blue)] font-bold" title="학교 미입력 — 학생 상세에서 입력">🏫?</span>
@@ -1803,13 +1890,13 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                   <span className="text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full bg-[var(--blue-bg)] text-[var(--blue)] font-bold">신규</span>
                                 )}
                                 {!withdrawn && !student.phone && (
-                                  <span className="text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--orange)] font-bold" title="학생 본인 전화 미등록">학생번호 등록 필요</span>
+                                  <span className="text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--scheduled-text)] font-bold" title="학생 본인 전화 미등록">학생번호 등록 필요</span>
                                 )}
                                 {prevUnpaid && (
                                   <span className="text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full bg-[var(--unpaid-bg)] text-[var(--unpaid-text)] font-bold" title="지난달 미납">지난달 미납</span>
                                 )}
                                 {isBatchExcluded(student, selectedMonth) && (
-                                  <span className="text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--orange)] font-bold" title="이 달 정규 일괄청구에서 제외됨 — 개별 발송 필요">일괄 제외</span>
+                                  <span className="text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--scheduled-text)] font-bold" title="이 달 정규 일괄청구에서 제외됨 — 개별 발송 필요">일괄 제외</span>
                                 )}
                                 {/* 보충비(비정규 별도청구) 배지 — 정규/특강 어디에도 안 뜨던 것 가시화 (2026-07-18 원장 지시) */}
                                 {(() => {
@@ -1822,7 +1909,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                       className="text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full font-bold"
                                       style={paid
                                         ? { background: 'var(--paid-bg)', color: 'var(--paid-text)' }
-                                        : { background: 'var(--orange-dim)', color: 'var(--orange)' }}
+                                        : { background: 'var(--orange-dim)', color: 'var(--scheduled-text)' }}
                                       title={`보충비 ${formatWon(sup.amount)} — ${paid ? '결제완료' : '미납(청구서 발송됨)'}`}
                                     >
                                       보충 {amt} {paid ? '완납' : '미납'}
@@ -1832,7 +1919,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                 {/* 결제일 임박 + 청구서 미발송 리마인더 (2026-07-03). 청구서 발송하면 조건에서 빠져 자동 소멸 */}
                                 {billDueSoon && (
                                   <span
-                                    className={`inline-flex items-center gap-0.5 text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full font-bold animate-fade-in align-middle ${daysUntilDue < 0 ? 'bg-[var(--unpaid-bg)] text-[var(--unpaid-text)]' : 'bg-[var(--orange-dim)] text-[var(--orange)]'}`}
+                                    className={`inline-flex items-center gap-0.5 text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full font-bold animate-fade-in align-middle ${daysUntilDue < 0 ? 'bg-[var(--unpaid-bg)] text-[var(--unpaid-text)]' : 'bg-[var(--orange-dim)] text-[var(--scheduled-text)]'}`}
                                     title={daysUntilDue < 0 ? '결제일 지남 · 청구서 미발송' : '결제일 임박 · 청구서 미발송'}
                                   >
                                     <Send className="w-2.5 h-2.5" strokeWidth={2.5} /> {billDueLabel}
@@ -1852,30 +1939,13 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                       tabIndex={0}
                                       onClick={(e) => { e.stopPropagation(); handleOpenModal(student.id, fee) }}
                                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); handleOpenModal(student.id, fee) } }}
-                                      className="inline-flex items-center gap-0.5 text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--orange)] font-bold animate-pulse align-middle cursor-pointer"
+                                      className="inline-flex items-center gap-0.5 text-[9px] ml-1.5 px-1.5 py-0.5 rounded-full bg-[var(--orange-dim)] text-[var(--scheduled-text)] font-bold animate-pulse align-middle cursor-pointer"
                                       title={`${mlabel} 영수증 사진 등록 필요 — 탭하여 촬영/업로드`}
                                     >
                                       <Camera className="w-2.5 h-2.5" strokeWidth={2.5} /> 영수증 등록
                                     </span>
                                   )
                                 })()}
-                                <AnimatePresence initial={false}>
-                                  {/* 퇴원생 최종처분 상태(환불완료/파기/정리/결제취소)는 빨간 아이콘으로 충분 → 이름 아래 글자 숨김 (2026-05-30 사용자 지시) */}
-                                  {student.memo && !(withdrawn && /환불|청구서 파기|이번달까지 정리|결제취소|결제 취소/.test(student.memo)) && (
-                                    <motion.div
-                                      key="memo"
-                                      initial={{ height: 0, opacity: 0 }}
-                                      animate={{ height: 'auto', opacity: 1 }}
-                                      exit={{ height: 0, opacity: 0 }}
-                                      transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-                                      style={{ overflow: 'hidden' }}
-                                    >
-                                      <p className="text-[11px] font-medium leading-tight mt-0.5 text-[var(--text-3)]">
-                                        {student.memo}
-                                      </p>
-                                    </motion.div>
-                                  )}
-                                </AnimatePresence>
                               </TButton>
 
                               {/* 2026-07-03: 인라인 납부 폼을 이름 줄 아래층으로 이동 — 같은 줄에 있으면 이름이 눌려 2줄로 꺾이고 정렬이 깨짐 */}
@@ -1910,7 +1980,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                         initial={{ opacity: 0, scale: 0.85 }}
                                         animate={{ opacity: 1, scale: 1 }}
                                         transition={{ type: 'spring', stiffness: 520, damping: 24 }}
-                                        whileTap={{ scale: 0.96 }}
+                                        whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                                         onClick={(e) => { e.stopPropagation(); handleOpenModal(student.id, fee) }}
                                         className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap cursor-pointer hover:opacity-80 transition-opacity"
                                         style={{ backgroundColor: displayColors.bg, color: displayColors.text }}
@@ -1960,8 +2030,9 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                         // 재청구 결제완료는 '완료'라 초록, 처리중/예약은 주황, 나머지(후속작업 표시)는 빨강
                                         const isPaidStatus = ws === 'resettled_paid'
                                         return (
-                                          <button
+                                          <motion.button
                                             type="button"
+                                            whileTap={ICON_PRESS}
                                             onClick={(e) => {
                                               e.stopPropagation()
                                               setWithdrawMenuTarget({
@@ -1976,13 +2047,13 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                                 regularBillStatus: billByStudent.get(student.id)?.status ?? null,
                                               })
                                             }}
-                                            className="p-1 rounded-lg shrink-0 transition-colors hover:opacity-80 active:scale-95 flex items-center justify-center"
-                                            style={isPaidStatus ? { color: 'var(--paid-text)', background: 'var(--paid-bg)' } : isPending ? { color: 'var(--orange)', background: 'var(--orange-dim)' } : { color: 'var(--red)', background: 'var(--red-dim)' }}
+                                            className="hit-slop p-1 rounded-lg shrink-0 transition-colors hover:opacity-80 flex items-center justify-center"
+                                            style={{ ...(isPaidStatus ? { color: 'var(--paid-text)', background: 'var(--paid-bg)' } : isPending ? { color: 'var(--scheduled-text)', background: 'var(--orange-dim)' } : { color: 'var(--red)', background: 'var(--red-dim)' }), ...HIT_ROW }}
                                             title={title}
                                             aria-label={title}
                                           >
                                             <StatusIc className={`w-3.5 h-3.5${ws === 'resettle_pending' ? ' animate-spin' : ''}`} />
-                                          </button>
+                                          </motion.button>
                                         )
                                       }
                                     }
@@ -2006,11 +2077,10 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                       return (
                                         <motion.button
                                           key="split-paid"
-                                          layout
                                           initial={{ scale: 0.4, opacity: 0, rotate: -25 }}
                                           animate={{ scale: 1, opacity: 1, rotate: 0 }}
                                           transition={{ type: 'spring', stiffness: 460, damping: 24 }}
-                                          whileTap={{ scale: 0.92 }}
+                                          whileTap={ICON_PRESS}
                                           onClick={(e) => {
                                             e.stopPropagation()
                                             setBillActionTarget({
@@ -2024,8 +2094,8 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                               paymentDueDay: student.payment_due_day ?? null,
                                             })
                                           }}
-                                          className="p-1 rounded-lg shrink-0 hover:opacity-80 flex items-center justify-center"
-                                          style={{ color: 'white', background: 'var(--blue)' }}
+                                          className="hit-slop p-1 rounded-lg shrink-0 hover:opacity-80 flex items-center justify-center"
+                                          style={{ color: 'var(--on-action)', background: 'var(--blue)', ...HIT_ROW }}
                                           aria-label={`분할 청구 ${allSplit.length}건 모두 결제완료`}
                                           title={`분할 청구 ${allSplit.length}건 모두 결제완료`}
                                         >
@@ -2042,11 +2112,10 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                       return (
                                         <motion.button
                                           key="split-sent"
-                                          layout
                                           initial={{ scale: 0.4, opacity: 0, rotate: -25 }}
                                           animate={{ scale: 1, opacity: 1, rotate: 0 }}
                                           transition={{ type: 'spring', stiffness: 460, damping: 24 }}
-                                          whileTap={{ scale: 0.92 }}
+                                          whileTap={ICON_PRESS}
                                           onClick={(e) => {
                                             e.stopPropagation()
                                             setBillActionTarget({
@@ -2060,8 +2129,8 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                               paymentDueDay: student.payment_due_day ?? null,
                                             })
                                           }}
-                                          className="p-1 rounded-lg shrink-0 hover:opacity-80 flex items-center justify-center"
-                                          style={{ color: 'var(--orange)', background: 'var(--orange-dim)' }}
+                                          className="hit-slop p-1 rounded-lg shrink-0 hover:opacity-80 flex items-center justify-center"
+                                          style={{ color: 'var(--scheduled-text)', background: 'var(--orange-dim)', ...HIT_ROW }}
                                           aria-label={`분할 청구 ${splitBills.length}건 발송됨 — 탭하여 관리`}
                                           title={`분할 청구 ${splitBills.length}건 발송됨 — 탭하여 관리`}
                                         >
@@ -2089,11 +2158,10 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                       return (
                                         <motion.button
                                           key={method}
-                                          layout
                                           initial={{ scale: 0.4, opacity: 0, rotate: -90 }}
                                           animate={{ scale: 1, opacity: 1, rotate: 0 }}
                                           transition={{ type: 'spring', stiffness: 520, damping: 22 }}
-                                          whileTap={{ scale: 0.92 }}
+                                          whileTap={ICON_PRESS}
                                           onClick={(e) => {
                                             e.stopPropagation()
                                             if (method === 'payssam' && bill?.status === 'paid') {
@@ -2111,8 +2179,8 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                               handleOpenModal(student.id, fee)
                                             }
                                           }}
-                                          className="p-1 rounded-lg transition-colors shrink-0 hover:opacity-80 flex items-center justify-center"
-                                          style={{ color: 'var(--blue)', background: 'var(--blue-dim)' }}
+                                          className="hit-slop p-1 rounded-lg transition-colors shrink-0 hover:opacity-80 flex items-center justify-center"
+                                          style={{ color: 'var(--blue)', background: 'var(--blue-dim)', ...HIT_ROW }}
                                           aria-label={s.title}
                                           title={s.title}
                                         >
@@ -2133,11 +2201,10 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                       return (
                                         <motion.button
                                           key="split-pending"
-                                          layout
                                           initial={{ scale: 0.4, opacity: 0, rotate: -25 }}
                                           animate={{ scale: 1, opacity: 1, rotate: 0 }}
                                           transition={{ type: 'spring', stiffness: 460, damping: 24 }}
-                                          whileTap={{ scale: 0.92 }}
+                                          whileTap={ICON_PRESS}
                                           disabled={splitSendingId === student.id}
                                           onClick={async (e) => {
                                             e.stopPropagation()
@@ -2182,8 +2249,8 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                               mutateBills()
                                             }
                                           }}
-                                          className="p-1 rounded-lg shrink-0 hover:opacity-80 flex items-center justify-center disabled:opacity-50"
-                                          style={{ color: 'var(--text-3)', background: 'var(--bg-elevated)' }}
+                                          className="hit-slop p-1 rounded-lg shrink-0 hover:opacity-80 flex items-center justify-center disabled:opacity-50"
+                                          style={{ color: 'var(--text-3)', background: 'var(--bg-elevated)', ...HIT_ROW }}
                                           aria-label={`분할 청구 예정 — ${partsCount}건 합 ${formatWon(total)} (탭하면 확인 후 발송)`}
                                           title={`분할 청구 예정 — ${partsCount}건 합 ${formatWon(total)} (탭하면 확인 후 발송)`}
                                         >
@@ -2208,6 +2275,10 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                     height: { duration: 0.32, ease: [0.22, 1, 0.36, 1] },
                                     opacity: { duration: 0.22, ease: [0.22, 1, 0.36, 1] },
                                   }}
+                                  onAnimationComplete={definition => {
+                                    // 펼침(height:auto)이 끝났을 때만 — 접힘(exit) 완료에는 재지 않는다
+                                    if ((definition as { height?: unknown })?.height === 'auto') revealExpandedRow(student.id)
+                                  }}
                                   style={{ overflow: 'visible' }}
                                 >
                                   <div
@@ -2222,7 +2293,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                         setShowDatePicker(!showDatePicker)
                                         setShowMethodPicker(false)
                                       }}
-                                      className="fan-item px-2 py-1 rounded-full text-xs font-medium bg-[var(--orange-dim)] text-[var(--orange)] whitespace-nowrap shrink-0"
+                                      className="fan-item px-2 py-1 rounded-full text-xs font-medium bg-[var(--orange-dim)] text-[var(--scheduled-text)] whitespace-nowrap shrink-0"
                                       aria-label="결제일 선택"
                                     >
                                       {(() => { const d = new Date(inlineDate); return `${d.getMonth()+1}/${d.getDate()}` })()}
@@ -2242,7 +2313,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                     </TButton>
                                     <div className="fan-item flex-1 min-w-0 relative">
                                       {inlineMemoFromPrev && inlineMemo && (
-                                        <span className="absolute left-1.5 top-1/2 -translate-y-1/2 px-1 py-0.5 rounded text-[9px] font-semibold bg-[var(--orange-dim)] text-[var(--orange)] pointer-events-none">전달</span>
+                                        <span className="absolute left-1.5 top-1/2 -translate-y-1/2 px-1 py-0.5 rounded text-[9px] font-semibold bg-[var(--orange-dim)] text-[var(--scheduled-text)] pointer-events-none">전달</span>
                                       )}
                                       <input
                                         type="text"
@@ -2256,7 +2327,9 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                     <TButton
                                       onClick={() => handleInlineSubmit(student.id, fee)}
                                       disabled={!!inlineSuccess || !!inlineSubmitting}
-                                      className={`fan-item px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-300 shrink-0 ${
+                                      whileTap={ICON_PRESS}
+                                      style={HIT_FAN_PILL}
+                                      className={`fan-item hit-slop px-2.5 py-1 rounded-full text-xs font-medium transition-all duration-300 shrink-0 ${
                                         isSuccess ? 'bg-[var(--paid-bg)] text-[var(--paid-text)] scale-110' : isSubmitting ? 'bg-[var(--paid-bg)] text-[var(--paid-text)] opacity-60 scale-100' : 'bg-[var(--green-dim)] text-[var(--paid-text)] hover:opacity-80'
                                       }`}
                                       aria-label="납부 처리"
@@ -2272,7 +2345,9 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                         const parentPhone = billingPhone(student)
                                         setBillSendTarget({ studentId: student.id, studentName: student.name, phone: parentPhone, amount: fee, subject: cls.subject ?? null, className: cls.name ?? null, electives: student.electives ?? [] })
                                       }}
-                                      className="fan-item p-1 text-[var(--orange)] hover:opacity-70 shrink-0"
+                                      whileTap={ICON_PRESS}
+                                      style={HIT_FAN_MIDDLE}
+                                      className="fan-item hit-slop p-1 text-[var(--scheduled-text)] hover:opacity-70 shrink-0"
                                       aria-label="청구서 발송"
                                       title="카톡 청구서 발송"
                                     >
@@ -2280,7 +2355,9 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                                     </TButton>
                                     <TButton
                                       onClick={() => handleOpenModal(student.id, fee)}
-                                      className="fan-item p-1 text-[var(--blue)] hover:opacity-70 shrink-0"
+                                      whileTap={ICON_PRESS}
+                                      style={HIT_FAN_LAST}
+                                      className="fan-item hit-slop p-1 text-[var(--blue)] hover:opacity-70 shrink-0"
                                       aria-label="상세 납부 기록"
                                     >
                                       <ClipboardList className="w-3.5 h-3.5" />
@@ -2290,12 +2367,12 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                               )}
                             </AnimatePresence>
                             {!isExpanded && hasMemo && (
-                              <div className="flex justify-end px-4 pb-1">
+                              <div className="flex justify-end px-4 pb-0">
                                 <div className="text-right">
                                   {cleanMemo && <p className="text-[11px] text-[var(--text-3)] leading-tight">{cleanMemo}</p>}
-                                  {prevMemo && <p className="text-[11px] text-[var(--text-4)] leading-tight">지난달: {prevMemo}</p>}
+                                  {prevMemo && <p className="text-[11px] text-[var(--text-4)] leading-tight">지난달: {prevMemoLabel(prevMemo, prevMethod)}</p>}
                                   {prevMethodNonPayssam && (
-                                    <p className="text-[11px] text-[var(--orange)] leading-tight">
+                                    <p className="text-[11px] text-[var(--scheduled-text)] leading-tight">
                                       지난달: {PAYMENT_METHOD_LABELS[prevMethodNonPayssam]}
                                     </p>
                                   )}
@@ -2366,20 +2443,26 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
   }
 
   return (
-    <div ref={containerRef} onClick={() => { if (selectedMemoIds.size > 0 || swipeOpenPayId) closeSwipeEdit() }}>
-      {/* 다중 선택 툴바 — 제일 위 선택된 학생 행 위에 플로팅 */}
+    <>
+      {/* 다중 선택 툴바 — 제일 위 선택된 학생 행 위에 플로팅.
+          당겨서 새로고침이 컨테이너에 transform 을 거는 동안 position:fixed 기준 상자가 바뀌지 않도록
+          컨테이너 **밖**에 둔다(툴바 클릭은 원래도 stopPropagation 이라 컨테이너 onClick 과 무관). */}
       <AnimatePresence>
         {selectedMemoIds.size >= 2 && (
-          <motion.div
+          // 바깥 div = 위치(top 0 + rAF 가 쓰는 translate), 안쪽 motion = 등장·퇴장(y·opacity).
+          // 두 transform 의 소유자를 나눠야 framer 의 y 가 위치를 덮어쓰지 않는다.
+          <div
             key="bulk-toolbar"
             ref={bulkToolbarRef}
+            className="fixed left-2 right-2 top-0 z-50"
+            onClick={e => e.stopPropagation()}
+          >
+          <motion.div
             initial={{ y: -20, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -20, opacity: 0 }}
             transition={{ type: 'spring', stiffness: 420, damping: 34, mass: 0.8 }}
-            className="fixed left-2 right-2 z-50 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl shadow-xl"
-            style={{ top: bulkToolbarTop }}
-            onClick={e => e.stopPropagation()}
+            className="bg-[var(--bg-elevated)] border border-[var(--border)] rounded-xl shadow-xl"
           >
             <div className="max-w-3xl mx-auto px-3 py-2 flex items-center gap-2">
               <TButton
@@ -2401,7 +2484,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                       key={c}
                       type="button"
                       onClick={() => setEditMemoColor(active ? null : c)}
-                      className={`w-7 h-3.5 rounded-[2px] ${bg} ${active ? 'ring-1 ring-white/70 shadow-md' : 'opacity-60'}`}
+                      className={`w-7 h-3.5 rounded-[2px] ${bg} ${active ? 'ring-1 ring-[var(--text-1)] shadow-md' : 'opacity-60'}`}
                       style={{ transform: 'skewX(-10deg)' }}
                       aria-label={`색상 ${c}`}
                     />
@@ -2419,168 +2502,178 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
               <TButton
                 onClick={handleBulkSaveMemo}
                 disabled={bulkSaving}
-                className="p-1.5 bg-[var(--blue)] hover:opacity-80 text-white rounded-full shrink-0 shadow-sm transition-opacity disabled:opacity-50"
+                className="p-1.5 bg-[var(--blue)] hover:opacity-80 text-[var(--on-action)] rounded-full shrink-0 shadow-sm transition-opacity disabled:opacity-50"
                 aria-label="일괄 저장"
               >
                 {bulkSaving ? (
-                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <div className="w-3.5 h-3.5 border-2 border-[var(--on-action)] border-t-transparent rounded-full animate-spin" />
                 ) : (
                   <Check className="w-3.5 h-3.5" />
                 )}
               </TButton>
             </div>
           </motion.div>
+          </div>
         )}
       </AnimatePresence>
 
-      {/* 월 네비게이션 — 스크롤하면 사라짐 */}
-      <div className="-mx-4 px-4 pt-3 pb-1 -mt-6">
-        {/* Pull-to-refresh 인디케이터 */}
-        <AnimatePresence>
-          {pullDistance > 0 && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: pullDistance, opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-              className="flex items-center justify-center overflow-hidden"
-            >
-              <motion.div
-                animate={{
-                  rotate: isRefreshing ? 360 : (pullDistance / PULL_THRESHOLD) * 360,
-                  scale: pullDistance >= PULL_THRESHOLD ? 1.15 : 0.9,
-                }}
-                transition={isRefreshing
-                  ? { rotate: { duration: 0.8, repeat: Infinity, ease: 'linear' } }
-                  : { type: 'spring', stiffness: 200, damping: 15 }
+    <div ref={containerRef} onClick={() => { if (selectedMemoIds.size > 0 || swipeOpenPayId) closeSwipeEdit() }}>
+      <PaymentsHeader
+        month={selectedMonth} navigateMonth={navigateMonth}
+        memo={monthMemo} memoStatus={monthMemoStatus}
+        onMemoChange={content => { setMonthMemo(content); saveMonthMemo(content) }}
+        loading={dataLoading || !!error}
+        pullIndicator={
+          // Pull-to-refresh 인디케이터 — 0 높이, 컨테이너가 내려가며 생긴 틈에 그린다(레이아웃 없음)
+          <PullRefreshIndicator indicatorRef={pullVisual.indicatorRef} scaleRef={pullVisual.scaleRef} rotateRef={pullVisual.rotateRef} refreshing={isRefreshing} />
+        }
+        progress={batchSending && batchProgress ? (
+          <div role="status" className="flex items-center justify-center gap-1.5 py-1 whitespace-nowrap">
+            <Loader2 className="w-3 h-3 animate-spin text-[var(--scheduled-text)]" />
+            <span className="text-[11px] font-bold text-[var(--scheduled-text)] tabular-nums">{batchProgress.done}/{batchProgress.total}</span>
+            <TButton onClick={cancelBatch} disabled={cancellingBatch} className="px-1.5 py-0.5 rounded-md bg-[var(--red-dim)] text-[var(--red)] text-[10px] font-bold hover:opacity-80 disabled:opacity-50">
+              {cancellingBatch ? '중단중' : '중단'}
+            </TButton>
+          </div>
+        ) : null}
+        filters={dataLoading || error ? <span role="status" className="text-xs text-[var(--text-3)]">{error ? '데이터 로딩 실패' : '납부 내역 로딩 중'}</span> : <>
+        <AnimatePresence initial={false}>
+          {batchSending !== '__filter__' && (() => {
+            // 현재 필터(미납/결제일 직접입력)에 걸리는 모든 반의 발송가능 인원 합산.
+            // 필터 미적용(전체+직접입력 없음)일 땐 비활성 — 명시적 의도 없는 일괄 발송 방지.
+            // alreadyPaid/billByStudent.has 면 제외 — '발송 안한 사람' 만 대상.
+            let eligibleCount = 0
+            // 정규는 나갔고 선택과목분만 늦은 학생 — 일괄 대상은 아니지만 **사람이 알아야 한다**
+            // (2026-09-13 코드 검수: 전원이 이 경우면 targets 가 비어 모달도 배지도 사라져
+            //  어제 만든 안내에 도달할 길이 없었다)
+            let electivesOnlyCount = 0
+            for (const grade of grades) {
+              for (const cls of grade.classes ?? []) {
+                const classStudents = getActiveStudents(cls.students ?? [], selectedMonth).filter(s => passesFilter(s, cls as ClassWithStudents))
+                for (const s of classStudents) {
+                  const phone = billingPhone(s)
+                  const fee = getStudentFee(s, cls as ClassWithStudents)
+                  const alreadyPaid = (paymentsByStudentId.get(s.id) ?? []).length > 0
+                  if (isBatchExcluded(s, selectedMonth)) continue // 이 달만 일괄 제외 지정
+                  if (phone && fee > 0 && !billByStudent.has(s.id) && !alreadyPaid) eligibleCount++
+                  else if (paymentFilter === 'overdue_unsent' && phone && fee > 0 && !alreadyPaid && billByStudent.has(s.id)) electivesOnlyCount++
                 }
+              }
+            }
+            const isFilterless = paymentFilter === 'all' && !customActive
+            // 필터 미적용도 노출(비활성). 미납/직접입력 + 발송 가능 0명이면 숨김 —
+            // 단 '개별 발송 필요' 인원이 있으면 그 안내 배지는 남긴다
+            if (!isFilterless && eligibleCount === 0 && electivesOnlyCount === 0) return null
+            const labelPrefix = customActive ? customLabel : FILTER_LABELS[paymentFilter]
+            return (
+              <motion.button
+                key="filter-bulk-badge"
+                type="button"
+                onClick={() => {
+                  if (isFilterless) {
+                    toast.info('미납 또는 결제일 필터를 먼저 적용해주세요')
+                    return
+                  }
+                  openFilterBulkBillModal()
+                }}
+                disabled={!!batchSending || (isFilterless ? false : eligibleCount === 0 && electivesOnlyCount === 0)}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                aria-disabled={isFilterless}
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold shadow-sm active:opacity-70 disabled:opacity-50 whitespace-nowrap ${
+                  isFilterless
+                    ? 'bg-[var(--bg-elevated)] text-[var(--text-4)] opacity-60 cursor-not-allowed'
+                    : customActive
+                      ? 'bg-[var(--orange-dim)] text-[var(--scheduled-text)]'
+                      : 'bg-[var(--red-dim)] text-[var(--unpaid-text)]'
+                }`}
+                title={isFilterless
+                  ? '미납 또는 결제일 필터를 먼저 적용해주세요'
+                  : eligibleCount === 0
+                    ? `선택과목분만 지연돼 일괄로 못 보내는 ${electivesOnlyCount}명 — 눌러서 명단 확인 후 개별 발송`
+                    : `${labelPrefix} 조건의 미발송·미수납 학생 ${eligibleCount}명 일괄 발송`}
               >
-                <svg className="w-6 h-6 text-[var(--text-4)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </motion.div>
-            </motion.div>
+                <Send className="w-3 h-3" />
+                <span>{eligibleCount === 0 && electivesOnlyCount > 0 ? '개별 발송 필요' : `${labelPrefix} 일괄`}</span>
+                <span className="tabular-nums opacity-70">{eligibleCount === 0 && electivesOnlyCount > 0 ? electivesOnlyCount : eligibleCount}</span>
+              </motion.button>
+            )
+          })()}
+          {/* 일괄 재발송 배지 — sent + 결제일 지남 + 미결제 학생 */}
+          {batchSending !== '__resend__' && resendableTargets.targets.length > 0 && (
+            <motion.button
+              key="resend-bulk-badge"
+              type="button"
+              onClick={openBulkResendModal}
+              disabled={!!batchSending}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--orange-dim)] text-[var(--scheduled-text)] shadow-sm active:opacity-70 disabled:opacity-50 whitespace-nowrap"
+              title={`결제일 지난 미결제 ${resendableTargets.targets.length}명에게 카톡 알림 재발송`}
+            >
+              <Bell className="w-3 h-3" />
+              <span>재발송</span>
+              <span className="tabular-nums opacity-70">{resendableTargets.targets.length}</span>
+            </motion.button>
           )}
         </AnimatePresence>
-        <div className="flex items-center justify-center gap-3 mb-1">
-          <TButton onClick={() => navigateMonth(-1)} className="p-2 hover:bg-[var(--bg-elevated)] rounded-lg" aria-label="이전 달">
-            <ChevronLeft className="w-7 h-7" />
-          </TButton>
-          <h1 className="font-extrabold tracking-tight text-center">
-            <span className="text-[2.6rem] sm:text-[3.2rem] leading-none">{selectedMonth.split('-')[0]}</span>
-            <span className="text-[1.8rem] sm:text-[2.2rem] text-[var(--text-3)]">년 </span>
-            <span className="text-5xl sm:text-6xl">{parseInt(selectedMonth.split('-')[1])}</span>
-            <span className="text-[1.8rem] sm:text-[2.2rem] text-[var(--text-3)]">월</span>
-          </h1>
-          <TButton onClick={() => navigateMonth(1)} className="p-2 hover:bg-[var(--bg-elevated)] rounded-lg" aria-label="다음 달">
-            <ChevronRight className="w-7 h-7" />
-          </TButton>
-        </div>
-        <div className="flex justify-center">
-          <TButton
-            onClick={() => {
-              const a = document.createElement('a')
-              a.href = `/api/payments/export?billing_month=${selectedMonth}`
-              a.download = ''
-              a.click()
-            }}
-            className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs text-[var(--text-4)] hover:text-[var(--text-3)] hover:bg-[var(--bg-elevated)] transition-colors"
-          >
-            <Download className="w-3 h-3" />
-            <span>내보내기</span>
-          </TButton>
-        </div>
-
-      </div>
-
-      {/* 월별 메모 — sticky. 축소 시 1줄 프리뷰가 textarea를 가려 2번째 줄 흘러보임 방지 */}
-      <div data-sticky-header className="sticky top-14 z-30 bg-[var(--bg)] -mx-4 px-4 pt-2 pb-2">
-        <motion.div
-          animate={{ height: memoCompact ? 38 : memoNaturalH }}
-          transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-          className="relative overflow-hidden rounded-xl bg-[var(--bg-elevated)]"
-        >
-          <motion.textarea
-            value={monthMemo}
-            readOnly={monthMemoStatus !== 'loaded'}
-            onChange={e => {
-              if (monthMemoStatus !== 'loaded') return
-              setMonthMemo(e.target.value)
-              saveMonthMemo(e.target.value)
-            }}
-            onFocus={() => setMemoFocused(true)}
-            onBlur={() => setMemoFocused(false)}
-            placeholder={monthMemoStatus === 'failed' ? '메모 로드 실패 — 새로고침 후 편집하세요' : '메모...'}
-            animate={{ opacity: memoCompact ? 0 : 1 }}
-            transition={{ duration: memoCompact ? 0.12 : 0.35, ease: 'easeOut', delay: memoCompact ? 0 : 0.15 }}
-            className="absolute inset-0 w-full h-full resize-none bg-transparent rounded-xl px-3 py-2 text-sm text-[var(--text-1)] placeholder:text-[var(--text-4)] focus:outline-none focus:ring-1 focus:ring-[var(--blue)] leading-[22px] overflow-y-auto"
-          />
-          {/* compact 프리뷰 — 1줄로 고정, 2번째 줄 가림막 역할 */}
-          <motion.div
-            aria-hidden
-            animate={{ opacity: memoCompact ? 1 : 0 }}
-            transition={{ duration: memoCompact ? 0.2 : 0.12, ease: 'easeOut', delay: memoCompact ? 0.05 : 0 }}
-            className="absolute inset-0 px-3 py-2 text-sm leading-[22px] text-[var(--text-1)] whitespace-nowrap overflow-hidden bg-[var(--bg-elevated)] pointer-events-none"
-          >
-            {monthMemo ? monthMemo.split('\n')[0] : <span className="text-[var(--text-4)]">메모...</span>}
-          </motion.div>
-          {/* 숨겨진 sizer — 자연 높이 측정용 */}
-          <div
-            ref={memoSizerRef}
-            aria-hidden
-            className="absolute inset-0 invisible pointer-events-none whitespace-pre-wrap break-words px-3 py-2 text-sm leading-[22px]"
-          >
-            {monthMemo + '\n'}
+        <div className="flex items-center gap-1.5">
+          <div className="relative flex items-center pr-1">
+            <TButton
+              type="button"
+              onClick={openDayPicker}
+              ref={dayPickerButtonRef}
+              aria-haspopup="dialog"
+              aria-expanded={dayPickerOpen}
+              aria-label="결제일 선택"
+              className={`px-3 py-1 rounded-full text-xs font-semibold shadow-sm transition-colors whitespace-nowrap ${
+                (customActive || paymentFilter === 'overdue_unsent')
+                  ? 'bg-[var(--blue-dim)] text-[var(--blue)]'
+                  : 'bg-[var(--bg-elevated)] text-[var(--text-2)] hover:bg-[var(--bg-card-hover)]'
+              }`}
+            >
+              {paymentFilter === 'overdue_unsent' ? `청구지연 ${overdueCalendar.studentCount}` : customActive ? customLabel : '결제일'}
+            </TButton>
+            {(customActive || paymentFilter === 'overdue_unsent') && (
+              <TButton
+                type="button"
+                onClick={clearDayPicker}
+                aria-label="직접 입력 해제"
+                className="absolute -right-1 -top-1 w-4 h-4 rounded-full bg-[var(--bg-elevated)] text-[var(--text-3)] text-[10px] leading-none flex items-center justify-center shadow-sm hover:text-[var(--text-1)]"
+              >
+                ×
+              </TButton>
+            )}
           </div>
-        </motion.div>
-      </div>
-
-      {/* 빈 상태 — 필터바는 학년 헤더와 동일하게 유지하고 그 아래에 메시지 한 줄 */}
+          <TButton
+            onClick={() => setPaymentFilter(prev => prev === 'unpaid' ? 'all' : 'unpaid')}
+            disabled={customActive}
+            aria-pressed={paymentFilter === 'unpaid'}
+            className={`flex items-center justify-center px-3 py-1 rounded-full text-xs font-semibold transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
+              paymentFilter === 'unpaid'
+                ? 'bg-[var(--red-dim)] text-[var(--unpaid-text)]'
+                : 'bg-[var(--bg-elevated)] text-[var(--text-2)] hover:bg-[var(--bg-card-hover)]'
+            }`}
+          >
+            <span>{paymentFilter === 'overdue_unsent' ? FILTER_LABELS.unpaid : FILTER_LABELS[paymentFilter]}</span>
+          </TButton>
+        </div>
+        </>}
+      />
+      <div data-payments-content>
+      {dataLoading ? <PaymentsSkeleton showMonthNav={false} /> : error ? (
+        <div className="text-center py-12">
+          <p className="text-[var(--red)] mb-4">{error?.message || '데이터 로딩 실패'}</p>
+          <TButton onClick={fetchData} className="px-4 py-2 bg-[var(--blue)] text-[var(--on-action)] rounded-lg hover:opacity-90">다시 시도</TButton>
+        </div>
+      ) : <>
+      {/* 결과가 비어도 필터 진입/해제는 헤더에서 유지한다. */}
       {visibleSections.length === 0 && (customActive || paymentFilter !== 'all') && (
         <>
-          <div
-            className="sticky z-20 bg-[var(--bg)] -mx-4 px-5 pt-1.5 pb-1.5 mb-1 flex items-center justify-end gap-2"
-            style={{ top: 'var(--grade-sticky-top, 140px)' }}
-          >
-            <div className="flex items-center gap-1.5">
-              <div className="relative flex items-center">
-                <TButton
-                  type="button"
-                  onClick={openDayPicker}
-                  aria-label="결제일 선택"
-                  className={`px-3 py-1 rounded-full text-xs font-semibold shadow-sm transition-colors ${
-                    customActive
-                      ? 'bg-[var(--blue-dim)] text-[var(--blue)]'
-                      : 'bg-[var(--bg-elevated)] text-[var(--text-2)] hover:bg-[var(--bg-card-hover)]'
-                  }`}
-                >
-                  {customActive ? customLabel : '결제일'}
-                </TButton>
-                {customActive && (
-                  <TButton
-                    type="button"
-                    onClick={() => { setCustomStart(null); setCustomEnd(null) }}
-                    aria-label="직접 입력 해제"
-                    className="absolute -right-1 -top-1 w-4 h-4 rounded-full bg-[var(--bg-elevated)] text-[var(--text-3)] text-[10px] leading-none flex items-center justify-center shadow-sm hover:text-[var(--text-1)]"
-                  >
-                    ×
-                  </TButton>
-                )}
-              </div>
-              <TButton
-                onClick={() => setPaymentFilter(prev => prev === 'unpaid' ? 'all' : 'unpaid')}
-                disabled={customActive}
-                aria-pressed={paymentFilter === 'unpaid'}
-                className={`flex items-center justify-center px-3 py-1 rounded-full text-xs font-semibold transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed ${
-                  paymentFilter === 'unpaid'
-                    ? 'bg-[var(--red-dim)] text-[var(--unpaid-text)]'
-                    : 'bg-[var(--bg-elevated)] text-[var(--text-2)] hover:bg-[var(--bg-card-hover)]'
-                }`}
-              >
-                <span>{FILTER_LABELS[paymentFilter]}</span>
-              </TButton>
-            </div>
-          </div>
           <EmptyState
             icon={SearchX}
             title={customActive
@@ -2629,13 +2722,10 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                 })
               }
 
-              const isFirstGrade = visibleSections[0]?.key === `${subject}__${gradeId}`
-
               return (
                 <div key={gradeId} data-section-key={`${subject}__${gradeId}`}>
                   <div
-                    className="sticky z-20 bg-[var(--bg)] -mx-4 px-5 pt-1.5 pb-1.5 mb-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5"
-                    style={{ top: 'var(--grade-sticky-top, 140px)' }}
+                    className="bg-[var(--bg)] -mx-4 px-5 pt-1.5 pb-1.5 mb-1 flex items-center justify-between gap-x-3"
                   >
                     <TButton
                       onClick={toggleGradeExpand}
@@ -2646,162 +2736,7 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                       </motion.div>
                       <span className="text-[15px] font-bold text-[var(--text-1)] tracking-tight whitespace-nowrap">{gradeName}</span>
                     </TButton>
-                    {isFirstGrade && (
-                      <div className="flex flex-wrap items-center justify-end gap-1.5">
-                        <AnimatePresence initial={false}>
-                          {batchSending !== '__filter__' && (() => {
-                            // 현재 필터(미납/결제일 직접입력)에 걸리는 모든 반의 발송가능 인원 합산.
-                            // 필터 미적용(전체+직접입력 없음)일 땐 비활성 — 명시적 의도 없는 일괄 발송 방지.
-                            // alreadyPaid/billByStudent.has 면 제외 — '발송 안한 사람' 만 대상.
-                            let eligibleCount = 0
-                            for (const grade of grades) {
-                              for (const cls of grade.classes ?? []) {
-                                const classStudents = getActiveStudents(cls.students ?? [], selectedMonth).filter(s => passesFilter(s, cls as ClassWithStudents))
-                                for (const s of classStudents) {
-                                  const phone = billingPhone(s)
-                                  const fee = getStudentFee(s, cls as ClassWithStudents)
-                                  const alreadyPaid = (paymentsByStudentId.get(s.id) ?? []).length > 0
-                                  if (isBatchExcluded(s, selectedMonth)) continue // 이 달만 일괄 제외 지정
-                                  if (phone && fee > 0 && !billByStudent.has(s.id) && !alreadyPaid) eligibleCount++
-                                }
-                              }
-                            }
-                            const isFilterless = paymentFilter === 'all' && !customActive
-                            // 필터 미적용도 노출(비활성). 미납/직접입력 + 발송 가능 0명이면 숨김
-                            if (!isFilterless && eligibleCount === 0) return null
-                            const labelPrefix = customActive ? customLabel : FILTER_LABELS[paymentFilter]
-                            return (
-                              <motion.button
-                                key="filter-bulk-badge"
-                                type="button"
-                                onClick={() => {
-                                  if (isFilterless) {
-                                    toast.info('미납 또는 결제일 필터를 먼저 적용해주세요')
-                                    return
-                                  }
-                                  openFilterBulkBillModal()
-                                }}
-                                disabled={!!batchSending || (isFilterless ? false : eligibleCount === 0)}
-                                initial={{ opacity: 0, scale: 0.9 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                exit={{ opacity: 0, scale: 0.9 }}
-                                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                                aria-disabled={isFilterless}
-                                className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold shadow-sm active:opacity-70 disabled:opacity-50 whitespace-nowrap ${
-                                  isFilterless
-                                    ? 'bg-[var(--bg-elevated)] text-[var(--text-4)] opacity-60 cursor-not-allowed'
-                                    : customActive
-                                      ? 'bg-[var(--orange-dim)] text-[var(--orange)]'
-                                      : 'bg-[var(--red-dim)] text-[var(--unpaid-text)]'
-                                }`}
-                                title={isFilterless ? '미납 또는 결제일 필터를 먼저 적용해주세요' : `${labelPrefix} 조건의 미발송·미수납 학생 ${eligibleCount}명 일괄 발송`}
-                              >
-                                <Send className="w-3 h-3" />
-                                <span>{labelPrefix} 일괄</span>
-                                <span className="tabular-nums opacity-70">{eligibleCount}</span>
-                              </motion.button>
-                            )
-                          })()}
-                          {/* 일괄 재발송 배지 — sent + 결제일 지남 + 미결제 학생 */}
-                          {batchSending !== '__resend__' && resendableTargets.targets.length > 0 && (
-                            <motion.button
-                              key="resend-bulk-badge"
-                              type="button"
-                              onClick={openBulkResendModal}
-                              disabled={!!batchSending}
-                              initial={{ opacity: 0, scale: 0.9 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              exit={{ opacity: 0, scale: 0.9 }}
-                              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                              className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[var(--orange-dim)] text-[var(--orange)] shadow-sm active:opacity-70 disabled:opacity-50 whitespace-nowrap"
-                              title={`결제일 지난 미결제 ${resendableTargets.targets.length}명에게 카톡 알림 재발송`}
-                            >
-                              <Bell className="w-3 h-3" />
-                              <span>재발송</span>
-                              <span className="tabular-nums opacity-70">{resendableTargets.targets.length}</span>
-                            </motion.button>
-                          )}
-                          {batchSending === '__resend__' && batchProgress && (
-                            <motion.div
-                              key="resend-bulk-progress"
-                              initial={{ opacity: 0, scale: 0.9 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              exit={{ opacity: 0, scale: 0.9 }}
-                              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--orange-dim)] whitespace-nowrap"
-                            >
-                              <Loader2 className="w-3 h-3 animate-spin text-[var(--orange)]" />
-                              <span className="text-[11px] font-bold text-[var(--orange)] tabular-nums">{batchProgress.done}/{batchProgress.total}</span>
-                              <TButton
-                                onClick={cancelBatch}
-                                disabled={cancellingBatch}
-                                className="px-1.5 py-0.5 rounded-md bg-[var(--red-dim)] text-[var(--red)] text-[10px] font-bold hover:opacity-80 disabled:opacity-50"
-                              >
-                                {cancellingBatch ? '중단중' : '중단'}
-                              </TButton>
-                            </motion.div>
-                          )}
-                          {batchSending === '__filter__' && batchProgress && (
-                            <motion.div
-                              key="filter-bulk-progress"
-                              initial={{ opacity: 0, scale: 0.9 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              exit={{ opacity: 0, scale: 0.9 }}
-                              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--orange-dim)] whitespace-nowrap"
-                            >
-                              <Loader2 className="w-3 h-3 animate-spin text-[var(--orange)]" />
-                              <span className="text-[11px] font-bold text-[var(--orange)] tabular-nums">{batchProgress.done}/{batchProgress.total}</span>
-                              <TButton
-                                onClick={cancelBatch}
-                                disabled={cancellingBatch}
-                                className="px-1.5 py-0.5 rounded-md bg-[var(--red-dim)] text-[var(--red)] text-[10px] font-bold hover:opacity-80 disabled:opacity-50"
-                              >
-                                {cancellingBatch ? '중단중' : '중단'}
-                              </TButton>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                        <div className="flex items-center gap-1.5">
-                          <div className="relative flex items-center">
-                            <TButton
-                              type="button"
-                              onClick={openDayPicker}
-                              aria-label="결제일 선택"
-                              className={`px-3 py-1 rounded-full text-xs font-semibold shadow-sm transition-colors whitespace-nowrap ${
-                                customActive
-                                  ? 'bg-[var(--blue-dim)] text-[var(--blue)]'
-                                  : 'bg-[var(--bg-elevated)] text-[var(--text-2)] hover:bg-[var(--bg-card-hover)]'
-                              }`}
-                            >
-                              {customActive ? customLabel : '결제일'}
-                            </TButton>
-                            {customActive && (
-                              <TButton
-                                type="button"
-                                onClick={() => { setCustomStart(null); setCustomEnd(null) }}
-                                aria-label="직접 입력 해제"
-                                className="absolute -right-1 -top-1 w-4 h-4 rounded-full bg-[var(--bg-elevated)] text-[var(--text-3)] text-[10px] leading-none flex items-center justify-center shadow-sm hover:text-[var(--text-1)]"
-                              >
-                                ×
-                              </TButton>
-                            )}
-                          </div>
-                          <TButton
-                            onClick={() => setPaymentFilter(prev => prev === 'unpaid' ? 'all' : 'unpaid')}
-                            disabled={customActive}
-                            aria-pressed={paymentFilter === 'unpaid'}
-                            className={`flex items-center justify-center px-3 py-1 rounded-full text-xs font-semibold transition-colors shadow-sm disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap ${
-                              paymentFilter === 'unpaid'
-                                ? 'bg-[var(--red-dim)] text-[var(--unpaid-text)]'
-                                : 'bg-[var(--bg-elevated)] text-[var(--text-2)] hover:bg-[var(--bg-card-hover)]'
-                            }`}
-                          >
-                            <span>{FILTER_LABELS[paymentFilter]}</span>
-                          </TButton>
-                        </div>
-                      </div>
-                    )}
+
                   </div>
                   <div className="card overflow-hidden">
                   {gradeClasses.map(cls => {
@@ -2852,57 +2787,6 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
                         <span className="text-xs text-[var(--text-4)] ml-2">{paidCount}/{statTotal}</span>
                       )}
                       <span className="flex-1" />
-                      {(() => {
-                        const eligibleCount = students.filter(s => {
-                          const phone = billingPhone(s)
-                          const fee = getStudentFee(s, cls)
-                          const alreadyPaid = (paymentsByStudentId.get(s.id) ?? []).length > 0
-                          return phone && fee > 0 && !billByStudent.has(s.id) && !alreadyPaid
-                        }).length
-                        const isBatchSending = batchSending === cls.id
-                        if (isBatchSending && batchProgress) {
-                          return (
-                            <div className="flex items-center gap-1.5 mr-1" onClick={e => e.stopPropagation()}>
-                              <Loader2 className="w-3 h-3 animate-spin text-[var(--orange)]" />
-                              <span className="text-[10px] font-bold text-[var(--orange)] tabular-nums">{batchProgress.done}/{batchProgress.total}</span>
-                              <TButton
-                                onClick={cancelBatch}
-                                disabled={cancellingBatch}
-                                className="px-1.5 py-0.5 rounded-md bg-[var(--red-dim)] text-[var(--red)] text-[10px] font-bold hover:opacity-80 disabled:opacity-50"
-                              >
-                                {cancellingBatch ? '중단중' : '중단'}
-                              </TButton>
-                            </div>
-                          )
-                        }
-                        const isFilterless = paymentFilter === 'all' && !customActive
-                        // 미납/직접입력 상태에서 발송 가능 0명이면 숨김. 필터 미적용은 비활성으로 노출.
-                        if (!isFilterless && eligibleCount === 0) return null
-                        return (
-                          <TButton
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              if (isFilterless) {
-                                toast.info('미납 또는 결제일 필터를 먼저 적용해주세요')
-                                return
-                              }
-                              openBulkBillModal(cls)
-                            }}
-                            disabled={!!batchSending}
-                            aria-disabled={isFilterless}
-                            className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold mr-1 disabled:opacity-40 ${
-                              isFilterless
-                                ? 'bg-[var(--bg-elevated)] text-[var(--text-4)] opacity-60 cursor-not-allowed'
-                                : 'bg-[var(--orange-dim)] text-[var(--orange)] hover:opacity-80'
-                            }`}
-                            aria-label={`${formatClassName(cls)} 일괄 청구서 발송`}
-                            title={isFilterless ? '미납 또는 결제일 필터를 먼저 적용해주세요' : `미발송·미수납 ${eligibleCount}명 일괄 발송`}
-                          >
-                            <Send className="w-3 h-3" />
-                            <span>일괄 {eligibleCount}</span>
-                          </TButton>
-                        )
-                      })()}
                       <TButton
                         onClick={(e) => { e.stopPropagation(); handleAddStudent(cls.id) }}
                         className="p-0.5 text-[var(--text-4)] hover:text-[var(--blue)] transition-colors"
@@ -3047,6 +2931,9 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
         <EmptyState title="등록된 학생이 없습니다" description="설정에서 학생을 먼저 추가해주세요" size="page" />
       )}
 
+      </>}
+      </div>
+      {!dataLoading && !error && <>
       <AnimatePresence>
         {showPaymentModal && selectedStudentId && (
           <PaymentModal
@@ -3187,114 +3074,9 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
         />
       )}
 
-      {/* 결제일 picker (달력) — createPortal 바깥, AnimatePresence 안. (AnimatePresence가 createPortal 반환값을 직계 자식으로 추적 못해 모달이 안 뜨던 버그 수정 2026-06-15) */}
-      {createPortal(
-        <AnimatePresence>
-          {dayPickerOpen && (
-        <motion.div
-          key="day-picker-backdrop"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[60] flex items-center justify-center p-4"
-          onClick={() => setDayPickerOpen(false)}
-        >
-          <motion.div
-            initial={{ scale: 0.95, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0.95, opacity: 0 }}
-            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-            className="w-full max-w-xs bg-[var(--bg-card)] rounded-2xl shadow-xl p-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-semibold text-[var(--text-1)]">
-                {tempStart === null
-                  ? '결제일 선택'
-                  : tempEnd === null
-                    ? `${tempStart}일 (한 번 더 누르면 범위)`
-                    : tempStart === tempEnd
-                      ? `${tempStart}일`
-                      : `${tempStart}일 ~ ${tempEnd}일`}
-              </div>
-              <TButton
-                type="button"
-                onClick={() => setDayPickerOpen(false)}
-                aria-label="닫기"
-                className="w-7 h-7 rounded-full flex items-center justify-center text-[var(--text-3)] hover:bg-[var(--bg-elevated)]"
-              >
-                <X className="w-4 h-4" />
-              </TButton>
-            </div>
-            {/* 요일 헤더 — 이번 달(selectedMonth) 기준으로 날짜를 요일 열에 정렬 (2026-07-08 사용자 지시) */}
-            <div className="grid grid-cols-7 gap-1 text-center mb-1.5">
-              {['일', '월', '화', '수', '목', '금', '토'].map((d, i) => (
-                <span key={d} className={`text-[10px] font-medium ${i === 0 ? 'text-[var(--red)]' : i === 6 ? 'text-[var(--blue)]' : 'text-[var(--text-4)]'}`}>{d}</span>
-              ))}
-            </div>
-            <div className="grid grid-cols-7 gap-1">
-              {(() => {
-                const [fy, fm] = selectedMonth.split('-').map(Number)
-                const firstDow = new Date(fy, fm - 1, 1).getDay() // 이번달 1일 요일(0=일)
-                // 2026-07-09 야간감사: length:31 하드코딩 → 이번달 실제 일수로. 2월31일 등 존재않는 날짜 클릭 방지.
-                const daysInMonth = new Date(fy, fm, 0).getDate()
-                const cells: (number | null)[] = [...Array(firstDow).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)]
-                return cells.map((day, idx) => {
-                  if (day === null) return <div key={`empty-${idx}`} className="aspect-square" />
-                  const isStart = tempStart === day
-                  const isEnd = tempEnd === day
-                  const inRange = tempStart !== null && tempEnd !== null && day > tempStart && day < tempEnd
-                  const selected = isStart || isEnd
-                  return (
-                    <TButton
-                      key={day}
-                      type="button"
-                      onClick={() => handleDayPick(day)}
-                      className={`aspect-square rounded-lg text-xs font-semibold transition-colors ${
-                        selected
-                          ? 'bg-[var(--blue)] text-white'
-                          : inRange
-                            ? 'bg-[var(--blue-dim)] text-[var(--blue)]'
-                            : 'text-[var(--text-2)] hover:bg-[var(--bg-elevated)]'
-                      }`}
-                    >
-                      {day}
-                    </TButton>
-                  )
-                })
-              })()}
-            </div>
-            <div className="flex items-center justify-between gap-2 mt-3">
-              <TButton
-                type="button"
-                onClick={clearDayPicker}
-                className="px-3 py-2 rounded-xl text-xs font-semibold text-[var(--text-3)] hover:bg-[var(--bg-elevated)]"
-              >
-                해제
-              </TButton>
-              <TButton
-                type="button"
-                onClick={confirmDayPicker}
-                disabled={tempStart === null}
-                className="flex-1 py-2 rounded-xl text-sm font-bold bg-[var(--blue)] text-white disabled:bg-[var(--bg-card-hover)] disabled:text-[var(--text-4)] flex items-center justify-center gap-1.5"
-              >
-                <Check className="w-4 h-4" />
-                <span>적용</span>
-              </TButton>
-            </div>
-          </motion.div>
-        </motion.div>
-          )}
-        </AnimatePresence>,
-        document.body
-      )}
-
-      {/* 일괄발송 결과 토스트 */}
-      {batchResultToast && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-4 py-3 bg-[var(--bg-card)] border border-[var(--border)] rounded-xl shadow-lg text-sm font-medium text-[var(--text-1)] max-w-md">
-          {batchResultToast}
-        </div>
-      )}
+      <PaymentDayFilterPicker open={dayPickerOpen} month={selectedMonth}
+        value={{ filter: paymentFilter, start: customStart, end: customEnd }} overdue={overdueCalendar}
+        anchorRef={dayPickerButtonRef} onApply={applyDayPicker} onClear={clearDayPicker} onClose={() => setDayPickerOpen(false)} />
 
       <AiFilterButton
         aiFilterIds={aiFilterIds}
@@ -3303,6 +3085,15 @@ const [detailStudentId, setDetailStudentId] = useState<string | null>(null)
         onClear={clearAiFilter}
         loading={aiFilterLoading}
       />
+      </>}
     </div>
+
+      {/* 일괄발송 결과 토스트 — 툴바와 같은 이유로 컨테이너 밖(fixed 기준 상자 고정). 표시 조건은 그대로 */}
+      {!dataLoading && !error && batchResultToast && (
+        <div data-paper-card="" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-4 py-3 bg-[var(--bg-card)] border border-[var(--border)] rounded-xl shadow-lg text-sm font-medium text-[var(--text-1)] max-w-md">
+          {batchResultToast}
+        </div>
+      )}
+    </>
   )
 }

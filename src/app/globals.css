@@ -333,7 +333,10 @@ button:active, a:active, [role="button"]:active {
   100% { opacity: 1; transform: translateX(0) scale(1); }
 }
 
-.fan-item { animation: fanOut 0.3s ease-out both; }
+/* backwards(=지연 동안만 첫 프레임 유지): 끝난 뒤엔 채우지 않는다 — 마지막 프레임이 기본값(이동 0·배율 1·불투명)과 같아
+   모양은 그대로이고, `both` 로 transform 을 계속 붙잡으면 버튼의 누름 배율(whileTap 인라인 transform)을 덮어 눌림이 안 보였다
+   (2026-09-27 배치2 #1). */
+.fan-item { animation: fanOut 0.3s ease-out backwards; }
 .fan-item:nth-child(1) { animation-delay: 0ms; }
 .fan-item:nth-child(2) { animation-delay: 60ms; }
 .fan-item:nth-child(3) { animation-delay: 120ms; }
@@ -366,13 +369,29 @@ button:active, a:active, [role="button"]:active {
   }
 }
 
-/* bridge press feedback — 누름 접수 100ms (NN-g/Material 근거). @layer base라 Tailwind active:scale 유틸이 우선; 누름 피드백 없는 버튼만 채움. amnesia 2026-05-31 */
+/* bridge press feedback — 누름 접수 100ms (NN-g/Material 근거). @layer base라 Tailwind active:scale 유틸이 우선; 누름 피드백 없는 버튼만 채움. 2026-05-31 */
 @layer base {
   button { transition: transform 100ms cubic-bezier(0, 0, 0.2, 1); }
   button:active:not(:disabled) { transform: scale(0.97); }
 }
 
-/* Border Beam — 순수 CSS 테두리 빔 (amnesia 공통 컴포넌트, 2026-07-07 dispatch).
+/* 작은 아이콘 버튼 터치 영역 확장 (2026-09-27 동작품질 배치2 #1 — "청구 버튼이 누르기 불편하다").
+   보이는 크기·위치·레이아웃은 그대로, 버튼 **안의** 투명 가상 요소만 네 방향으로 늘린다 → 늘어난 곳을 눌러도
+   이벤트 대상은 그 버튼(onClick·stopPropagation·행 스와이프 버블 동일). 수치는 src/lib/hitSlop.ts 가 정한다
+   (이웃과 간격 반씩 — 확장 영역끼리 겹치지 않음). 색·그림자·touch-action 없음. */
+@layer components {
+  .hit-slop { position: relative; overflow: visible; }
+  .hit-slop::before {
+    content: '';
+    position: absolute;
+    top: calc(var(--hit-t, 0px) * -1);
+    right: calc(var(--hit-r, 0px) * -1);
+    bottom: calc(var(--hit-b, 0px) * -1);
+    left: calc(var(--hit-l, 0px) * -1);
+  }
+}
+
+/* Border Beam — 순수 CSS 테두리 빔 (공통 컴포넌트, 2026-07-07).
    핵심 CTA에만 class="border-beam". 브랜드색(토스블루)로, prefers-reduced-motion 대응. */
 @property --bb-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
 .border-beam { position: relative; isolation: isolate; }
@@ -394,3 +413,277 @@ button:active, a:active, [role="button"]:active {
 }
 @keyframes bb-spin { to { --bb-angle: 360deg; } }
 @media (prefers-reduced-motion: reduce) { .border-beam::before { animation: none; } }
+
+/* ─── 매출 추이 차트 (stats) ───
+ * 라인 드로우인은 pathLength="1" 정규화 + CSS stroke-dashoffset 으로 한다.
+ * framer-motion 의 pathLength 애니메이션은 initial 값이 SSR HTML 에 인라인으로 박혀
+ * 하이드레이션 전까지 선이 안 보인다(운영 중 확인된 함정) — CSS 는 SSR 에서도 안전.
+ * prefers-reduced-motion 은 전역 규칙이 duration 을 0.001ms 로 만들어 즉시 완성선이 된다. */
+@keyframes trend-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.trend-line {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: trend-draw 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+@keyframes trend-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.trend-point { animation: trend-fade-in 0.4s ease-out 0.5s both; }
+@keyframes trend-bar-grow { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+.trend-bar {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: trend-bar-grow 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+
+/* ─── D3 밝은 아이보리 ───
+ * PageTransition의 기존 div가 SSR부터 테마 표식을 제공한다. :has 경계는 root와
+ * body 포털 모두에 적용되며 /kiosk는 위의 기존 토큰·모션을 그대로 사용한다.
+ * body/html에 transform, isolation, containment를 주지 않는다(fixed 기준 보존).
+ */
+:root:has([data-ui-theme="paper"]) {
+  color-scheme: light;
+  --bg: #f4f1ea;
+  --bg-card: #fdfcf8;
+  --bg-card-hover: #f7f5ef;
+  --bg-elevated: #eae6dc;
+  --bg-overlay: rgba(40, 36, 30, .30);
+  --text-1: #241f19;
+  --text-2: #4a453c;
+  /* 출발 팔레트의 3/4번은 elevated 위 4.5:1 미달. 질감 최악값까지 보정. */
+  --text-3: #625c50;
+  --text-4: #686154;
+  --border: #e5e0d3;
+  --border-light: #efebe1;
+  --control-border: #817868;
+  --blue: #3a5a6d;
+  --blue-dim: #e2e8ea;
+  --blue-bg: #e8eef0;
+  --blue-hover: #2f4b5b;
+  --red: #9c4b1f;
+  --red-dim: #f5e5db;
+  --red-hover: #843d18;
+  --green: #3f5d45;
+  --green-dim: #e6ede4;
+  --orange: #8a6420;
+  --orange-dim: #f4ebd9;
+  --paid-bg: #e6ede4;
+  --paid-text: #36543c;
+  --unpaid-bg: #f5e5db;
+  --unpaid-text: #8c3f18;
+  --scheduled-bg: #f4ebd9;
+  --scheduled-text: #7a5713;
+  --on-action: #fdfcf8;
+  --on-media: #fdfcf8;
+  --purple: #66517e;
+  --purple-dim: #eee7f2;
+  --pink: #804d63;
+  --pink-dim: #f2e6eb;
+  --cyan: #365f62;
+  --cyan-dim: #e2ecea;
+  --yellow: #715e23;
+  --yellow-dim: #f0ebd7;
+  --color-primary: var(--blue);
+  --color-primary-light: var(--blue-dim);
+  --color-accent: #766b58;
+  --color-white: var(--on-action);
+  --paper-ink: 36, 31, 25;
+  --paper-grain-opacity: .12;
+  /* 고정 1장, normal 합성. alpha 최대 .12 × opacity .12 = 1.44% 회색 혼합.
+   * multiply의 스크롤 합성 비용을 없애며 밝고 어두운 픽셀 모두 대비 시험에 포함한다. */
+  --paper-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3CfeComponentTransfer%3E%3CfeFuncA type='linear' slope='.12'/%3E%3C/feComponentTransfer%3E%3C/filter%3E%3Cpath fill='%23000' filter='url(%23n)' d='M0 0h160v160H0z'/%3E%3C/svg%3E");
+  --paper-edge: rgba(var(--paper-ink), .16);
+  --paper-highlight: inset 0 1px 0 var(--on-action);
+  --paper-shadow-sm: 2px 2px 0 var(--border), var(--paper-highlight);
+  --paper-shadow-md: 3px 3px 0 var(--border), var(--paper-highlight);
+  --paper-shadow-lg: 4px 4px 0 rgba(var(--paper-ink), .16), var(--paper-highlight);
+  --paper-shadow-pressed: 1px 1px 0 var(--border), inset 0 1px 1px rgba(var(--paper-ink), .09);
+  --focus-ring: var(--blue);
+  --media-overlay: rgba(20, 18, 15, .94);
+  --media-control: rgba(253, 252, 248, .12);
+  --media-control-hover: rgba(253, 252, 248, .22);
+  --particle: 63, 93, 69;
+  --radius-lg: .875rem;
+  --radius-xl: .875rem;
+  /* JS 대응: paperMotion.tsx PAPER_ENTER/PAPER_PRESS. spring은 별도 상수. */
+  --motion-enter: 220ms;
+  --motion-press: 90ms;
+  --motion-ease: cubic-bezier(.22, 1, .36, 1);
+}
+
+/* B 남색 잉크. light 블록의 질감·치수·별칭을 상속하고 색 파생값은 모두 대조한다.
+ * kiosk 표식은 스킴보다 우선하며 독립 오류 문서는 이 선택자에 들어오지 않는다. */
+:root:has([data-ui-theme="paper"])[data-paper-scheme="dark"]:not(:has([data-ui-theme="kiosk"])) {
+  color-scheme: dark;
+  --bg: #161a20;
+  --bg-card: #1d232b;
+  --bg-card-hover: #232a33;
+  --bg-elevated: #29313b;
+  --bg-overlay: rgba(0, 0, 0, .60);
+  --text-1: #e7eaef;
+  --text-2: #c4cad3;
+  --text-3: #98a2ae;
+  --text-4: #98a2ae;
+  --border: #313a46;
+  --border-light: #272e38;
+  --control-border: #7f8a98;
+  --blue: #93b9d3;
+  --blue-dim: #233240;
+  --blue-bg: #233240;
+  --blue-hover: #a9cbe1;
+  --red: #e29579;
+  --red-dim: #3a2a27;
+  --red-hover: #edac91;
+  --green: #a2c6a8;
+  --green-dim: #24332b;
+  --orange: #d9b46b;
+  --orange-dim: #37311f;
+  --paid-bg: var(--green-dim);
+  --paid-text: var(--green);
+  --unpaid-bg: var(--red-dim);
+  --unpaid-text: var(--red);
+  --scheduled-bg: var(--orange-dim);
+  --scheduled-text: var(--orange);
+  --on-action: #161a20;
+  --on-media: #e7eaef;
+  --purple: #bea9d5;
+  --purple-dim: #312b3d;
+  --pink: #d7a5ba;
+  --pink-dim: #3b2a32;
+  --cyan: #9ec7c7;
+  --cyan-dim: #253637;
+  --yellow: #d3c184;
+  --yellow-dim: #353222;
+  --color-primary: var(--blue);
+  --color-primary-light: var(--blue-dim);
+  --color-accent: var(--text-3);
+  --color-white: var(--text-1);
+  --paper-ink: 231, 234, 239;
+  --paper-grain-opacity: .12;
+  --paper-edge: rgba(var(--paper-ink), .16);
+  --paper-highlight: inset 0 1px 0 rgba(255, 255, 255, .05);
+  --paper-shadow-sm: 2px 2px 0 rgba(0, 0, 0, .35), var(--paper-highlight);
+  --paper-shadow-md: 3px 3px 0 rgba(0, 0, 0, .40), var(--paper-highlight);
+  --paper-shadow-lg: 4px 4px 0 rgba(0, 0, 0, .45), var(--paper-highlight);
+  --paper-shadow-pressed: 1px 1px 0 rgba(0, 0, 0, .35), inset 0 1px 1px rgba(0, 0, 0, .09);
+  --focus-ring: var(--blue);
+  --media-overlay: rgba(8, 10, 14, .97);
+  --media-control: rgba(231, 234, 239, .12);
+  --media-control-hover: rgba(231, 234, 239, .22);
+  --particle: 162, 198, 168;
+}
+
+/* paperScheme이 지정한 면·글자에만 색 전환을 추가한다.
+ * 각 요소의 기존 transform/그림자/opacity 타이밍은 계산값 그대로 보존한다. */
+html.paper-scheme-changing [data-paper-color-transition],
+html.paper-scheme-changing[data-paper-color-transition] {
+  transition: var(--paper-color-transition) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  html.paper-scheme-changing [data-paper-color-transition],
+  html.paper-scheme-changing[data-paper-color-transition] { transition: none !important; }
+}
+
+/* 페이지·모달·Sonner보다 위의 고정 질감 1장. pointer-events:none은 필수.
+ * 배경은 반복 타일이지만 별도 레이어는 하나이며 카드에는 배경을 반복하지 않는다. */
+html:has([data-ui-theme="paper"]) body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 2147483646;
+  pointer-events: none;
+  background-image: var(--paper-grain);
+  opacity: var(--paper-grain-opacity);
+  mix-blend-mode: normal;
+}
+
+html:has([data-ui-theme="paper"]) {
+  & .card, & .card-elevated, & [data-paper-card] {
+    box-shadow: var(--paper-shadow-sm);
+    will-change: auto;
+  }
+  & [data-paper-card][class~="rounded-2xl"] { border-radius: var(--radius-xl); }
+  & .card-elevated { box-shadow: var(--paper-shadow-lg); }
+  & .text-warning { color: var(--scheduled-text); }
+  & .shadow-sm { --tw-shadow: var(--paper-shadow-pressed); }
+  & :is(.shadow-md, .shadow-lg) { --tw-shadow: var(--paper-shadow-sm); }
+  & .shadow-xl { --tw-shadow: var(--paper-shadow-md); }
+  & .shadow-2xl { --tw-shadow: var(--paper-shadow-lg); }
+  & .btn-primary, & .btn-danger { color: var(--on-action); }
+  /* 어두운 테마의 텍스트 alpha를 그대로 쓰면 밝은 종이 위 4.5:1이 깨진다.
+   * disabled와 등장/퇴장 opacity는 그대로 두고 읽는 글자·활성 입력 피드백만 보정. */
+  & :is(span, p):is(.opacity-50, .opacity-60, .opacity-70, .opacity-80),
+  & [data-swipe-row] > .opacity-60 { opacity: 1; }
+  & :is(button, a, [role="button"]):not(:disabled, [aria-disabled="true"])[class*="hover:opacity"]:hover,
+  & :is(button, a, [role="button"]):not(:disabled, [aria-disabled="true"])[class*="active:opacity"]:active { opacity: 1; }
+  & .badge-new { color: var(--blue); }
+  & .btn-primary:hover { background: var(--blue-hover); }
+  & .btn-danger:hover { background: var(--red-hover); }
+  & .section-header { background: var(--bg-elevated); }
+  & .divider, & .row, & .section-header { border-bottom-style: dashed; border-top-style: dashed; }
+  /* 기존 구분선만. 입력·선택을 나타내는 전체 테두리는 실선 유지. */
+  & :is(.border-b, .border-t):not(input, textarea, select, button) { border-style: dashed; border-color: var(--paper-edge); }
+  & :is(input, textarea, select)[class*="border-[var(--border)]"], & .input {
+    border-color: var(--control-border);
+  }
+  & :is(button, a, input, textarea, select, [tabindex]):focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  & .input:focus { border-color: var(--blue); box-shadow: 0 0 0 2px var(--focus-ring); }
+  & .border-beam::before {
+    background: none;
+    border: var(--bb-width, 1.5px) dashed var(--on-action);
+    opacity: .6;
+    padding: 0;
+    animation: none;
+    -webkit-mask: none;
+    mask: none;
+  }
+  & .animate-fade-in-up { animation-duration: var(--motion-enter); }
+  /* Framer(표시 속성), swipe/drag(기존 클래스/인라인), 중첩 컨트롤을 제외.
+   * touch-action은 어떤 요소에도 덮어쓰지 않는다. */
+  & :is(button, a, [role="button"], .row-interactive, .card-interactive):not([data-paper-motion], :disabled, [aria-disabled="true"], .touch-none, [style*="transform"], [style*="touch-action"]):not(:has(button, a, input, select, textarea, [role="button"])) {
+    transition: transform var(--motion-press) var(--motion-ease), box-shadow var(--motion-press) ease, background-color var(--motion-press) ease;
+    &:active { transform: scale(.985); box-shadow: var(--paper-shadow-pressed); }
+  }
+  & :is(button, a, [role="button"]):is(:disabled, [aria-disabled="true"], .touch-none):active,
+  & :is(button, a, [role="button"]):has(button, a, input, select, textarea, [role="button"]):active { transform: none; }
+  & [data-paper-motion] { transition-property: background-color, box-shadow; }
+  & [data-paper-motion]:active { transform: none; }
+  & :is(button, a, [role="button"], .card)[class*="active:scale"]:active { scale: 1; }
+  & :is(button, [role="button"])[data-paper-motion]:not(:disabled):active { box-shadow: var(--paper-shadow-pressed); }
+  /* 스와이프 행은 transform 소유권을 유지하고 배경만 반응한다. */
+  & [style*="touch-action: pan-y"]:active { background-color: var(--bg-card-hover); }
+  & [data-sonner-toast][data-styled="true"] {
+    --normal-bg: var(--bg-card);
+    --normal-text: var(--text-1);
+    --normal-border: var(--paper-edge);
+    --success-bg: var(--paid-bg);
+    --success-text: var(--paid-text);
+    --success-border: var(--green);
+    --error-bg: var(--unpaid-bg);
+    --error-text: var(--unpaid-text);
+    --error-border: var(--red);
+    --warning-bg: var(--scheduled-bg);
+    --warning-text: var(--scheduled-text);
+    --warning-border: var(--orange);
+    --info-bg: var(--blue-bg);
+    --info-text: var(--blue);
+    --info-border: var(--blue);
+    box-shadow: var(--paper-shadow-md);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:has([data-ui-theme="paper"]) {
+    &, & *, & *::before, & *::after {
+      animation-delay: 0s !important;
+      transition-delay: 0s !important;
+      scroll-behavior: auto !important;
+    }
+    & :is(button, a, [role="button"]):active { transform: none !important; }
+    & .trend-line { animation: none; stroke-dashoffset: 0; }
+    & .trend-point, & .trend-bar { animation: none; opacity: 1; transform: none; }
+    & [data-sonner-toast] { transition: none !important; }
+  }
+}

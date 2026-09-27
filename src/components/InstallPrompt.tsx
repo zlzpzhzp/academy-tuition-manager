@@ -1,7 +1,7 @@
 'use client'
 
 // 앱 설치 권유 배너 (2026-08-01 운영자님 지시 "브라우저에서 열면 설치할까요 뜨게").
-// 워라(academy-manager) InstallPrompt 구현을 기준으로 원비 디자인 토큰에 맞춰 옮긴 것.
+// 자매 앱의 InstallPrompt 구현을 기준으로 이 앱 디자인 토큰에 맞춰 옮긴 것.
 //
 // 브라우저는 설치 조건을 다 만족해도 **사이트가 직접 prompt()를 부르지 않으면** 설치를 권하지 않는다.
 // 그래서 beforeinstallprompt를 잡아 두고(preventDefault) 우리 배너 버튼으로 실제 설치창을 연다.
@@ -63,7 +63,7 @@ export default function InstallPrompt() {
     // 음성 대조 지점: 이미 설치(standalone)했거나 최근에 닫았으면 아무것도 하지 않는다.
     if (isStandalone() || dismissedRecently()) return
 
-    // 2026-08-01 경합 수정(amnesia 경보): beforeinstallprompt 는 리액트 하이드레이션보다 먼저
+    // 2026-08-01 경합 수정(운영 경보): beforeinstallprompt 는 리액트 하이드레이션보다 먼저
     // 지나갈 수 있다. layout 의 인라인 스크립트가 미리 잡아 window.__bipEvent 에 넣어두므로
     // ①이미 잡혀 있으면 바로 줍고 ②늦게 오면 bip-ready 로 받는다.
     // ③아래 직접 리스너는 인라인이 실패했을 때의 안전망으로 그대로 둔다.
@@ -95,7 +95,7 @@ export default function InstallPrompt() {
   }, [])
 
   // 배너가 떠 있는 동안 본문 하단에 여백을 준다.
-  // ⚠️ 여백 = '배너 카드 윗변 ~ 화면 아래끝' 전체다(배너 높이만 주면 하단 탭바 높이만큼 모자란다 — 워라 실측).
+  // ⚠️ 여백 = '배너 카드 윗변 ~ 화면 아래끝' 전체다(배너 높이만 주면 하단 탭바 높이만큼 모자란다 — 자매 앱 실측).
   //    높이를 하드코딩하지 않고 실측해서, 폭·safe-area·탭바 유무가 달라져도 따라가게 한다.
   useEffect(() => {
     if (hidden || (!deferred && !showIosGuide)) return
@@ -153,7 +153,7 @@ export default function InstallPrompt() {
       role="dialog"
       aria-label="앱 설치 안내"
     >
-      <div className="pointer-events-auto mx-auto max-w-md rounded-2xl px-4 py-3 flex items-center gap-3 shadow-lg bg-[var(--bg-card)] border border-[var(--border)]">
+      <div data-paper-card="" className="pointer-events-auto mx-auto max-w-md rounded-2xl px-4 py-3 flex items-center gap-3 shadow-lg bg-[var(--bg-card)] border border-[var(--border)]">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/icons/icon-192x192.png" alt="" width={40} height={40} className="rounded-xl shrink-0" />
         <div className="flex-1 min-w-0">
@@ -168,7 +168,7 @@ export default function InstallPrompt() {
           <button
             type="button"
             onClick={install}
-            className="shrink-0 px-3.5 py-2 rounded-xl text-[13px] font-bold text-white bg-[var(--blue)] active:scale-95 transition-transform"
+            className="shrink-0 px-3.5 py-2 rounded-xl text-[13px] font-bold text-[var(--on-action)] bg-[var(--blue)] active:scale-95 transition-transform"
           >
             설치
           </button>

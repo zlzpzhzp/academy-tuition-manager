@@ -30,6 +30,7 @@ export default function StudentModal({ student, grades, defaultClassId, onSave, 
   const [fatherPhone, setFatherPhone] = useState(formatPhone(student?.parent_father_phone ?? ''))    // 아버지
   const [payssamRecipient, setPayssamRecipient] = useState<'mother' | 'father'>(student?.payssam_recipient === 'father' ? 'father' : 'mother')
   const [attendanceRecipient, setAttendanceRecipient] = useState<'mother' | 'father'>(student?.attendance_recipient === 'father' ? 'father' : 'mother')
+  const [attendanceExtraPhone, setAttendanceExtraPhone] = useState(formatPhone(student?.attendance_extra_phone ?? ''))
   const [enrollmentDate, setEnrollmentDate] = useState(student?.enrollment_date ?? getTodayString())
   const [customFee, setCustomFee] = useState(student?.custom_fee != null ? String(student.custom_fee) : '')
   const [paymentDueDay, setPaymentDueDay] = useState(student?.payment_due_day != null ? String(student.payment_due_day) : '')
@@ -90,6 +91,7 @@ export default function StudentModal({ student, grades, defaultClassId, onSave, 
       parent_father_phone: fatherPhone,
       payssam_recipient: payssamRecipient,
       attendance_recipient: attendanceRecipient,
+      attendance_extra_phone: attendanceExtraPhone || null,
       enrollment_date: enrollmentDate,
       custom_fee: customFee ? parseInt(customFee) : null,
       payment_due_day: dueDay,
@@ -129,7 +131,7 @@ export default function StudentModal({ student, grades, defaultClassId, onSave, 
               type="text"
               value={school}
               onChange={e => setSchool(e.target.value)}
-              placeholder="예: 숭실고"
+              placeholder="예: 한국고"
               className="w-full px-3 py-2 border border-[var(--border)] bg-[var(--bg-card)] text-[var(--text-1)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--blue)]"
             />
           </div>
@@ -186,6 +188,7 @@ export default function StudentModal({ student, grades, defaultClassId, onSave, 
             const phoneInvalid = isInvalid(phone)
             const parentInvalid = isInvalid(parentPhone)
             const fatherInvalid = isInvalid(fatherPhone)
+            const extraInvalid = isInvalid(attendanceExtraPhone)
             const fieldCls = (bad: boolean) => `w-full px-3 py-2 border bg-[var(--bg-card)] text-[var(--text-1)] rounded-lg text-sm focus:outline-none focus:ring-2 transition-colors ${bad ? 'border-[var(--red)] focus:ring-[var(--red)]' : 'border-[var(--border)] focus:ring-[var(--blue)]'}`
             return (
               <div className="space-y-3">
@@ -256,7 +259,7 @@ export default function StudentModal({ student, grades, defaultClassId, onSave, 
                             key={r}
                             type="button"
                             onClick={() => set(r)}
-                            className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold transition-colors ${val === r ? 'bg-[var(--blue)] text-white' : 'text-[var(--text-3)] hover:text-[var(--text-1)]'}`}
+                            className={`flex-1 py-1.5 rounded-md text-[12px] font-semibold transition-colors ${val === r ? 'bg-[var(--blue)] text-[var(--on-action)]' : 'text-[var(--text-3)] hover:text-[var(--text-1)]'}`}
                           >
                             {r === 'mother' ? '어머니' : '아버지'}
                           </button>
@@ -264,6 +267,21 @@ export default function StudentModal({ student, grades, defaultClassId, onSave, 
                       </div>
                     </div>
                   ))}
+                </div>
+                <div>
+                  <label htmlFor="attendance-extra-phone" className="block text-sm font-medium text-[var(--text-2)] mb-1">추가 수신 번호(선택)</label>
+                  <input
+                    id="attendance-extra-phone"
+                    type="tel" inputMode="numeric"
+                    value={attendanceExtraPhone}
+                    onChange={e => setAttendanceExtraPhone(formatPhone(e.target.value))}
+                    placeholder="010-0000-0000"
+                    aria-invalid={extraInvalid}
+                    aria-describedby="attendance-extra-phone-help"
+                    className={fieldCls(extraInvalid)}
+                  />
+                  {extraInvalid && <p className="text-[10px] text-[var(--unpaid-text)] mt-0.5">올바른 형식이 아닙니다</p>}
+                  <p id="attendance-extra-phone-help" className="text-[10px] text-[var(--text-4)] mt-1">등하원 알림을 이 번호에도 함께 보냅니다</p>
                 </div>
               </div>
             )
@@ -317,7 +335,7 @@ export default function StudentModal({ student, grades, defaultClassId, onSave, 
           <TButton
             type="submit"
             disabled={codeDuplicate || saving}
-            className="w-full py-2.5 bg-[var(--blue)] text-white rounded-lg font-medium text-sm hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full py-2.5 bg-[var(--blue)] text-[var(--on-action)] rounded-lg font-medium text-sm hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {codeDuplicate ? '출결번호 중복 — 수정 필요' : saving ? '저장 중…' : student ? '수정' : '등록'}
           </TButton>

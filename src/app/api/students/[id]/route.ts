@@ -44,6 +44,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   if (body.parent_father_phone !== undefined) updates.parent_father_phone = body.parent_father_phone || null
   if (body.payssam_recipient !== undefined) updates.payssam_recipient = body.payssam_recipient === 'father' ? 'father' : 'mother'
   if (body.attendance_recipient !== undefined) updates.attendance_recipient = body.attendance_recipient === 'father' ? 'father' : 'mother'
+  if (body.attendance_extra_phone !== undefined) updates.attendance_extra_phone = body.attendance_extra_phone || null
   if (body.enrollment_date !== undefined) updates.enrollment_date = body.enrollment_date
   if (body.withdrawal_date !== undefined) updates.withdrawal_date = body.withdrawal_date
   if (body.custom_fee !== undefined) updates.custom_fee = body.custom_fee
@@ -101,14 +102,14 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   // memo/memo_color 변경은 빈번하므로 중요 변경만 로그.
   // 🔴 2026-08-02 보강: 이 목록이 낡아 있었다. school 을 3명 고쳤는데 **감사로그가 0건**이었고,
   //   그건 school 이 여기 없어서였다. 목록이 만들어진 뒤에 의미가 커진 필드들을 넣는다:
-  //     · school        — 2026-07-10 부로 원비가 학교정보의 **함대 정본**이다(쌤·홈피·워라가 이 값을 읽는다).
+  //     · school        — 2026-07-10 부로 이 앱이 학교정보의 **정본**이다(자매 앱들이 이 값을 읽는다).
   //                       실제로 잘못된 값이 3주간 3개 앱에 퍼졌는데 누가 언제 넣었는지 추적할 기록이 없었다.
   //     · parent_phone  — **청구서 수신처**다. 바뀌면 돈이 다른 번호로 간다.
   //     · phone         — 학생 본인 연락 경로.
   //     · attendance_code — 키오스크 신원. 바뀌면 다른 학생으로 등하원이 찍힌다.
   //     · electives     — 아래 feeKeys 에 이미 있어 **요금 스냅샷은 갱신하면서 로그는 안 남기던** 불일치.
   const importantKeys = ['name', 'class_id', 'custom_fee', 'payment_due_day', 'withdrawal_date', 'enrollment_date',
-    'school', 'parent_phone', 'phone', 'attendance_code', 'electives']
+    'school', 'parent_phone', 'phone', 'attendance_code', 'attendance_extra_phone', 'electives']
   const changed = Object.keys(updates).filter(k => importantKeys.includes(k))
   if (changed.length > 0) {
     const name = data.name || id

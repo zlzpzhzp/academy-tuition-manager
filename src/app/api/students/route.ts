@@ -82,9 +82,12 @@ export async function POST(request: Request) {
       parent_father_phone: body.parent_father_phone || null,
       payssam_recipient: body.payssam_recipient === 'father' ? 'father' : 'mother',
       attendance_recipient: body.attendance_recipient === 'father' ? 'father' : 'mother',
+      attendance_extra_phone: body.attendance_extra_phone || null,
       attendance_code: attendanceCode,
       enrollment_date: body.enrollment_date,
       custom_fee: body.custom_fee ?? null,
+      payment_due_day: Number.isInteger(body.payment_due_day) && body.payment_due_day >= 1 && body.payment_due_day <= 31
+        ? body.payment_due_day : null,
       memo: body.memo || null,
       order_index: nextOrder,
       electives: Array.isArray(body.electives) ? body.electives : [],

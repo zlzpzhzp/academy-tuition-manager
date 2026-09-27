@@ -156,6 +156,9 @@ CREATE TABLE IF NOT EXISTS public.tuition_students (
   payssam_recipient         text DEFAULT 'mother',
   -- attendance_recipient: 등·하원 알림톡을 어느 번호로 보낼지. 'mother' | 'father'. 기본 mother.
   attendance_recipient      text DEFAULT 'mother',
+  -- attendance_extra_phone: 등·하원 알림톡 **추가** 수신 번호(선택). 위 수신자와 별개로 한 번 더 보낸다.
+  --                         (예: 돌봄 선생님). 숫자만 비교해 같은 번호면 1회만. 청구서 수신자와는 무관.
+  attendance_extra_phone    text DEFAULT NULL,
   -- attendance_code: 키오스크 등·하원 체크인 코드. 학생 번호 뒷 4자리를 자동 배정하고,
   --                  중복이면 가운데 4자리로 대체한다. 재원생 사이에서 유일해야 한다(앱이 검사).
   attendance_code           varchar(4),
@@ -200,6 +203,7 @@ ALTER TABLE public.tuition_students ADD COLUMN IF NOT EXISTS school             
 ALTER TABLE public.tuition_students ADD COLUMN IF NOT EXISTS parent_father_phone       text;
 ALTER TABLE public.tuition_students ADD COLUMN IF NOT EXISTS payssam_recipient         text DEFAULT 'mother';
 ALTER TABLE public.tuition_students ADD COLUMN IF NOT EXISTS attendance_recipient      text DEFAULT 'mother';
+ALTER TABLE public.tuition_students ADD COLUMN IF NOT EXISTS attendance_extra_phone    text DEFAULT NULL;
 ALTER TABLE public.tuition_students ADD COLUMN IF NOT EXISTS attendance_code           varchar(4);
 ALTER TABLE public.tuition_students ADD COLUMN IF NOT EXISTS payment_due_day           integer;
 ALTER TABLE public.tuition_students ADD COLUMN IF NOT EXISTS electives_payment_due_day integer;

@@ -4,8 +4,8 @@
   "description": "학원 원비 관리 시스템",
   "start_url": "/dashboard",
   "display": "standalone",
-  "background_color": "#f9fafb",
-  "theme_color": "#1e2d6f",
+  "background_color": "#161a20",
+  "theme_color": "#161a20",
   "orientation": "portrait",
   "icons": [
     {

@@ -63,7 +63,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
     await writeAuditLog('teacher', id, 'update', `선생님 수정: ${data.name} (${logKeys.join(', ')})`, updates)
   }
 
-  return NextResponse.json(data)
+  return NextResponse.json(hasFinanceSession(request) ? data : stripFinanceFields(data))
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {

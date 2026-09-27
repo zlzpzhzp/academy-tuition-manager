@@ -155,7 +155,7 @@ export default function TeacherDetailPage({ params }: { params: Promise<{ id: st
 
     // HTML 기반 PDF 생성 (인쇄용)
     const statusLabel = (s: string) => s === 'paid' ? '완납' : s === 'partial' ? '부분' : '미납'
-    const statusColor = (s: string) => s === 'paid' ? '#03543F' : s === 'partial' ? '#92400E' : '#9B1C1C'
+    const statusColor = (s: string) => s === 'paid' ? 'var(--paid-text)' : s === 'partial' ? 'var(--scheduled-text)' : 'var(--unpaid-text)'
 
     let studentRows = ''
     let rowNum = 0
@@ -163,7 +163,7 @@ export default function TeacherDetailPage({ params }: { params: Promise<{ id: st
       for (const s of cd.students) {
         rowNum++
         studentRows += `
-          <tr style="border-bottom:1px solid #e5e7eb;">
+          <tr style="border-bottom:1px dashed var(--border);">
             <td style="padding:6px 8px;text-align:center;font-size:12px;">${rowNum}</td>
             <td style="padding:6px 8px;font-size:12px;">${esc(formatClassName(cd.cls))}</td>
             <td style="padding:6px 8px;font-size:12px;font-weight:500;">${esc(s.name)}</td>
@@ -178,7 +178,7 @@ export default function TeacherDetailPage({ params }: { params: Promise<{ id: st
     for (const cd of classDetails) {
       const daysLabel = cd.days ? cd.days.map(d => DAY_LABELS[d]).join(', ') : '-'
       classInfoRows += `
-        <tr style="border-bottom:1px solid #e5e7eb;">
+        <tr style="border-bottom:1px dashed var(--border);">
           <td style="padding:6px 8px;font-size:12px;font-weight:500;">${esc(formatClassName(cd.cls))}</td>
           <td style="padding:6px 8px;text-align:center;font-size:12px;">${cd.students.length}명</td>
           <td style="padding:6px 8px;text-align:center;font-size:12px;">${daysLabel}</td>
@@ -192,7 +192,7 @@ export default function TeacherDetailPage({ params }: { params: Promise<{ id: st
     if (bonuses.length > 0) {
       for (const b of bonuses) {
         bonusRows += `
-          <tr style="border-bottom:1px solid #e5e7eb;">
+          <tr style="border-bottom:1px dashed var(--border);">
             <td style="padding:6px 8px;font-size:12px;">${esc(b.memo || '보너스')}</td>
             <td style="padding:6px 8px;text-align:right;font-size:12px;">+${b.amount.toLocaleString()}원</td>
           </tr>`
@@ -205,27 +205,28 @@ export default function TeacherDetailPage({ params }: { params: Promise<{ id: st
     const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>급여명세서 - ${esc(teacher.name)} ${monthLabel}</title>
 <style>
+  :root { ${['--blue', '--blue-bg', '--border', '--bg-card-hover', '--text-1', '--text-2', '--text-3', '--text-4', '--paid-text', '--scheduled-text', '--unpaid-text', '--green', '--red'].map(token => `${token}:${getComputedStyle(document.documentElement).getPropertyValue(token)}`).join(';')} }
   @page { size: A4; margin: 15mm; }
-  body { font-family: -apple-system, 'Malgun Gothic', sans-serif; color: #1a1a1a; line-height: 1.5; }
+  body { font-family: -apple-system, 'Malgun Gothic', sans-serif; color: var(--text-1); line-height: 1.5; }
   table { width: 100%; border-collapse: collapse; }
-  .header { text-align: center; margin-bottom: 24px; border-bottom: 3px solid #3182f6; padding-bottom: 16px; }
-  .header h1 { font-size: 22px; color: #3182f6; margin: 0 0 4px; }
-  .header p { font-size: 13px; color: #666; margin: 0; }
+  .header { text-align: center; margin-bottom: 24px; border-bottom: 3px solid var(--blue); padding-bottom: 16px; }
+  .header h1 { font-size: 22px; color: var(--blue); margin: 0 0 4px; }
+  .header p { font-size: 13px; color: var(--text-3); margin: 0; }
   .section { margin-bottom: 20px; }
-  .section h2 { font-size: 14px; font-weight: 700; color: #3182f6; margin: 0 0 8px; padding-bottom: 4px; border-bottom: 2px solid #3182f6; }
+  .section h2 { font-size: 14px; font-weight: 700; color: var(--blue); margin: 0 0 8px; padding-bottom: 4px; border-bottom: 2px solid var(--blue); }
   .summary-table td { padding: 8px; font-size: 13px; }
-  .summary-label { color: #666; width: 40%; }
+  .summary-label { color: var(--text-3); width: 40%; }
   .summary-value { text-align: right; font-weight: 600; }
-  .total-row { background: #f0f2f8; }
-  .total-row td { font-weight: 700 !important; font-size: 15px !important; color: #3182f6; }
-  th { background: #f3f4f6; font-size: 11px; font-weight: 600; color: #555; padding: 6px 8px; text-align: left; }
-  .footer { margin-top: 32px; text-align: center; font-size: 11px; color: #999; }
+  .total-row { background: var(--blue-bg); }
+  .total-row td { font-weight: 700 !important; font-size: 15px !important; color: var(--blue); }
+  th { background: var(--bg-card-hover); font-size: 11px; font-weight: 600; color: var(--text-2); padding: 6px 8px; text-align: left; }
+  .footer { margin-top: 32px; text-align: center; font-size: 11px; color: var(--text-4); }
   .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
 </style></head><body>
 <div class="header">
   <h1>급여명세서</h1>
   <p>${monthLabel} | ${esc(teacher.name)} 선생님${teacher.subject ? ' | ' + esc(teacher.subject) : ''}</p>
-  <p style="font-size:11px;color:#999;margin-top:4px;">급여일: ${m === 12 ? y + 1 : y}년 ${m === 12 ? 1 : m + 1}월 1일</p>
+  <p style="font-size:11px;color:var(--text-4);margin-top:4px;">급여일: ${m === 12 ? y + 1 : y}년 ${m === 12 ? 1 : m + 1}월 1일</p>
 </div>
 
 <div class="section">
@@ -254,14 +255,14 @@ export default function TeacherDetailPage({ params }: { params: Promise<{ id: st
   <h2>급여 계산</h2>
   <table class="summary-table">
     <tbody>
-      <tr style="border-bottom:1px solid #e5e7eb;"><td class="summary-label">총 원비 (예정)</td><td class="summary-value">${payroll.totalFee.toLocaleString()}원</td></tr>
-      <tr style="border-bottom:1px solid #e5e7eb;"><td class="summary-label">총 수납액</td><td class="summary-value">${payroll.totalPaid.toLocaleString()}원</td></tr>
-      <tr style="border-bottom:1px solid #e5e7eb;"><td class="summary-label">배분 비율</td><td class="summary-value">${payRatio}%</td></tr>
-      <tr style="border-bottom:1px solid #e5e7eb;"><td class="summary-label">선생님 배분액 (수납액 × ${payRatio}%)</td><td class="summary-value">${payroll.teacherShare.toLocaleString()}원</td></tr>
-      ${bonusRows ? `<tr style="border-bottom:1px solid #e5e7eb;"><td class="summary-label">보너스 합계</td><td class="summary-value" style="color:#059669;">+${payroll.totalBonus.toLocaleString()}원</td></tr>` : ''}
+      <tr style="border-bottom:1px dashed var(--border);"><td class="summary-label">총 원비 (예정)</td><td class="summary-value">${payroll.totalFee.toLocaleString()}원</td></tr>
+      <tr style="border-bottom:1px dashed var(--border);"><td class="summary-label">총 수납액</td><td class="summary-value">${payroll.totalPaid.toLocaleString()}원</td></tr>
+      <tr style="border-bottom:1px dashed var(--border);"><td class="summary-label">배분 비율</td><td class="summary-value">${payRatio}%</td></tr>
+      <tr style="border-bottom:1px dashed var(--border);"><td class="summary-label">선생님 배분액 (수납액 × ${payRatio}%)</td><td class="summary-value">${payroll.teacherShare.toLocaleString()}원</td></tr>
+      ${bonusRows ? `<tr style="border-bottom:1px dashed var(--border);"><td class="summary-label">보너스 합계</td><td class="summary-value" style="color:var(--green);">+${payroll.totalBonus.toLocaleString()}원</td></tr>` : ''}
       ${bonusRows}
-      <tr style="border-bottom:1px solid #e5e7eb;"><td class="summary-label">세전 합계</td><td class="summary-value">${payroll.grossPay.toLocaleString()}원</td></tr>
-      <tr style="border-bottom:1px solid #e5e7eb;"><td class="summary-label">원천징수 (3.3%)</td><td class="summary-value" style="color:#dc2626;">${formatWonNeg(payroll.tax)}</td></tr>
+      <tr style="border-bottom:1px dashed var(--border);"><td class="summary-label">세전 합계</td><td class="summary-value">${payroll.grossPay.toLocaleString()}원</td></tr>
+      <tr style="border-bottom:1px dashed var(--border);"><td class="summary-label">원천징수 (3.3%)</td><td class="summary-value" style="color:var(--red);">${formatWonNeg(payroll.tax)}</td></tr>
       <tr class="total-row"><td style="padding:10px 8px;">실수령액</td><td style="padding:10px 8px;text-align:right;">${payroll.netPay.toLocaleString()}원</td></tr>
     </tbody>
   </table>
@@ -366,7 +367,7 @@ export default function TeacherDetailPage({ params }: { params: Promise<{ id: st
       </div>
 
       {/* 급여명세서 */}
-      <div className="bg-[var(--bg-card)] rounded-xl border p-5 mb-4">
+      <div data-paper-card="" className="bg-[var(--bg-card)] rounded-xl border p-5 mb-4">
         <h2 className="font-bold text-sm mb-4">급여명세서</h2>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between py-1.5 border-b">
@@ -481,7 +482,7 @@ export default function TeacherDetailPage({ params }: { params: Promise<{ id: st
       <TButton
         onClick={downloadPayslipPDF}
         disabled={payrollLoading || payrollError}
-        className="w-full py-3 mb-4 text-[var(--blue)] bg-[var(--bg-card)] border border-[var(--blue)] rounded-xl text-sm font-medium hover:bg-[#f0f2f8] flex items-center justify-center gap-2 disabled:opacity-50"
+        className="w-full py-3 mb-4 text-[var(--blue)] bg-[var(--bg-card)] border border-[var(--blue)] rounded-xl text-sm font-medium hover:bg-[var(--blue-bg)] flex items-center justify-center gap-2 disabled:opacity-50"
       >
         <Download className="w-4 h-4" />
         급여명세서 PDF 다운로드
@@ -489,7 +490,7 @@ export default function TeacherDetailPage({ params }: { params: Promise<{ id: st
 
       {/* 반별 학생 상세 */}
       {classDetails.map(({ cls, students, sessionCount, days, clsFee, clsPaid }) => (
-        <div key={cls.id} className="bg-[var(--bg-card)] rounded-xl border mb-4 overflow-hidden">
+        <div data-paper-card="" key={cls.id} className="bg-[var(--bg-card)] rounded-xl border mb-4 overflow-hidden">
           <div className="px-4 py-3 bg-[var(--bg-card-hover)] border-b">
             <div className="flex items-center justify-between">
               <div>
@@ -524,8 +525,8 @@ export default function TeacherDetailPage({ params }: { params: Promise<{ id: st
                     <span
                       className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
                       style={{
-                        backgroundColor: s.status === 'partial' ? '#FEF3C7' : '#FDE8E8',
-                        color: s.status === 'partial' ? '#92400E' : '#9B1C1C',
+                        backgroundColor: s.status === 'partial' ? 'var(--scheduled-bg)' : 'var(--unpaid-bg)',
+                        color: s.status === 'partial' ? 'var(--scheduled-text)' : 'var(--unpaid-text)',
                       }}
                     >
                       {PAYMENT_STATUS_LABELS[s.status]}

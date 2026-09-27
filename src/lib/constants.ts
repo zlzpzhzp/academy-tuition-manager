@@ -1,6 +1,6 @@
 import type { PaymentMethod } from '@/types'
 
-// 결제선생(payssam)은 자동 callback으로만 등록되며 수동 선택 옵션에서는 제외 (msg 1831)
+// 결제선생(payssam)은 자동 callback으로만 등록되며 수동 선택 옵션에서는 제외 
 export const METHOD_OPTIONS: [PaymentMethod, string][] = [
   ['card', '카드결제'],
   ['transfer', '계좌이체'],

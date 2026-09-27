@@ -7,12 +7,13 @@ import Link from 'next/link'
 import { Plus, Pencil, Trash2, ChevronDown, X, Check, ArrowRightLeft, ChevronUp, LogOut, ScrollText, UserCircle, FileText, BookPlus, UsersRound, FileSearch } from 'lucide-react'
 import { TButton } from '@/components/motion'
 import EmptyState from '@/components/ui/EmptyState'
+import PaperSchemeControl from '@/components/PaperSchemeControl'
 import type { Class, Student, Teacher } from '@/types'
 import { DAY_LABELS, parseClassDays } from '@/types'
 import { getActiveStudents, safeMutate, safeFetch, useGrades, revalidateGrades, useTeachers, revalidateTeachers } from '@/lib/utils'
 import { formatWon, formatClassName } from '@/lib/format'
 
-const SUBJECT_COLORS = ['bg-[#1c2d45] text-[#5b9cf5]', 'bg-[#1a3328] text-[#34d399]', 'bg-[#2a1e3a] text-[#9b82e8]', 'bg-[#332200] text-[#e5a731]', 'bg-[#351c2d] text-[#d96a9e]', 'bg-[#1a3232] text-[#3cbfcf]', 'bg-[#302e1a] text-[#d4b032]', 'bg-[var(--red-dim)] text-[var(--unpaid-text)]']
+const SUBJECT_COLORS = ['bg-[var(--blue-bg)] text-[var(--blue)]', 'bg-[var(--green-dim)] text-[var(--paid-text)]', 'bg-[var(--purple-dim)] text-[var(--purple)]', 'bg-[var(--orange-dim)] text-[var(--scheduled-text)]', 'bg-[var(--pink-dim)] text-[var(--pink)]', 'bg-[var(--cyan-dim)] text-[var(--cyan)]', 'bg-[var(--yellow-dim)] text-[var(--yellow)]', 'bg-[var(--red-dim)] text-[var(--unpaid-text)]']
 
 type GradeWithClasses = import('@/types').Grade & { classes: (Class & { students?: Student[] })[] }
 
@@ -30,7 +31,7 @@ function DayPicker({ days, setDays }: { days: number[]; setDays: (d: number[]) =
           type="button"
           onClick={() => setDays(days.includes(d) ? days.filter(x => x !== d) : [...days, d].sort())}
           className={`w-7 h-7 rounded text-xs font-medium ${
-            days.includes(d) ? 'bg-[var(--blue)] text-white' : 'bg-[var(--bg-elevated)] text-[var(--text-3)] hover:bg-[var(--bg-elevated)]'
+            days.includes(d) ? 'bg-[var(--blue)] text-[var(--on-action)]' : 'bg-[var(--bg-elevated)] text-[var(--text-3)] hover:bg-[var(--bg-elevated)]'
           }`}
           aria-pressed={days.includes(d)}
           aria-label={DAY_LABELS[d]}
@@ -325,7 +326,7 @@ export default function SettingsPage() {
       </div>
       <div className="space-y-3">
         {Array.from({ length: 3 }, (_, gi) => (
-          <div key={gi} className="bg-[var(--bg-card)] rounded-xl border overflow-hidden">
+          <div data-paper-card="" key={gi} className="bg-[var(--bg-card)] rounded-xl border overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-3">
               <div className="w-5 h-5 skeleton-shimmer rounded"></div>
               <div className="h-4 skeleton-shimmer rounded-xl w-28 flex-1"></div>
@@ -339,6 +340,7 @@ export default function SettingsPage() {
   return (
     <div>
       <h1 className="text-[22px] font-bold tracking-tight mb-6">과목/반 설정</h1>
+      <PaperSchemeControl />
 
       {/* 과목 탭 */}
       <div className="flex gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1">
@@ -348,7 +350,7 @@ export default function SettingsPage() {
             onClick={() => setSelectedSubject(subject)}
             className={`shrink-0 px-4 py-1.5 rounded-full text-sm font-semibold transition-colors ${
               selectedSubject === subject
-                ? 'bg-[var(--blue)] text-white'
+                ? 'bg-[var(--blue)] text-[var(--on-action)]'
                 : 'bg-[var(--bg-elevated)] text-[var(--text-3)] hover:bg-[var(--bg-card-hover)]'
             }`}
           >
@@ -377,7 +379,7 @@ export default function SettingsPage() {
                   {classesInSubject.length > 0 && (
                     <div className="space-y-2 mb-3">
                       {classesInSubject.map((cls, clsIdx) => (
-                        <div key={cls.id} className="flex items-center gap-1.5 sm:gap-2 bg-[var(--bg-card)] rounded-lg px-2 sm:px-3 py-2">
+                        <div data-paper-card="" key={cls.id} className="flex items-center gap-1.5 sm:gap-2 bg-[var(--bg-card)] rounded-lg px-2 sm:px-3 py-2">
                           {editingClassId === cls.id ? (
                             <div className="flex-1 min-w-0 space-y-2">
                               <div className="flex items-center gap-1.5 min-w-0">
@@ -664,8 +666,8 @@ export default function SettingsPage() {
 
       {/* 학생 반이동 모달 */}
       {transferClass && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center" onClick={() => setTransferClass(null)}>
-          <div className="bg-[var(--bg-card)] w-full sm:max-w-md sm:rounded-xl rounded-t-xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-end sm:items-center justify-center" onClick={() => setTransferClass(null)}>
+          <div data-paper-card="" className="bg-[var(--bg-card)] w-full sm:max-w-md sm:rounded-xl rounded-t-xl max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-4 border-b flex items-center justify-between shrink-0">
               <div>
                 <h2 className="font-bold text-sm">학생 반이동</h2>
@@ -703,7 +705,7 @@ export default function SettingsPage() {
                           <div className={`w-4 h-4 rounded border flex items-center justify-center shrink-0 ${
                             selectedStudents.has(s.id) ? 'bg-[var(--blue)] border-[var(--blue)]' : 'border-[var(--border)]'
                           }`}>
-                            {selectedStudents.has(s.id) && <Check className="w-3 h-3 text-white" />}
+                            {selectedStudents.has(s.id) && <Check className="w-3 h-3 text-[var(--on-action)]" />}
                           </div>
                           <span className="font-medium">{s.name}</span>
                         </TButton>
@@ -737,7 +739,7 @@ export default function SettingsPage() {
                 <TButton
                   onClick={executeTransfer}
                   disabled={transferring}
-                  className="w-full py-2.5 bg-[var(--blue)] text-white rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="w-full py-2.5 bg-[var(--blue)] text-[var(--on-action)] rounded-lg text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {transferring ? (
                     <>처리 중...</>
@@ -756,8 +758,8 @@ export default function SettingsPage() {
 
       {/* 감사 로그 모달 */}
       {showLogs && (
-        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center" onClick={() => setShowLogs(false)}>
-          <div className="bg-[var(--bg-card)] w-full sm:max-w-lg sm:rounded-xl rounded-t-xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-[var(--bg-overlay)] backdrop-blur-sm z-50 flex items-end sm:items-center justify-center" onClick={() => setShowLogs(false)}>
+          <div data-paper-card="" className="bg-[var(--bg-card)] w-full sm:max-w-lg sm:rounded-xl rounded-t-xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-4 border-b flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
                 <h2 className="font-bold text-sm">변경 로그</h2>
@@ -780,7 +782,7 @@ export default function SettingsPage() {
               ) : (
                 <div className="space-y-2">
                   {logs.map(log => {
-                    const actionColor = log.action === 'create' ? 'text-[#34d399] bg-[#1a3328]' : log.action === 'delete' ? 'text-[var(--unpaid-text)] bg-[var(--red-dim)]' : 'text-[#5b9cf5] bg-[#1c2d45]'
+                    const actionColor = log.action === 'create' ? 'text-[var(--paid-text)] bg-[var(--green-dim)]' : log.action === 'delete' ? 'text-[var(--unpaid-text)] bg-[var(--red-dim)]' : 'text-[var(--blue)] bg-[var(--blue-bg)]'
                     const actionLabel = log.action === 'create' ? '생성' : log.action === 'delete' ? '삭제' : '수정'
                     const date = new Date(log.created_at)
                     const timeStr = `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`

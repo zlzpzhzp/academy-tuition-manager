@@ -39,13 +39,16 @@ export async function queryGradesTree() {
 }
 
 /** Supabase 응답을 프론트용 구조로 변환 (tuition_classes → classes, tuition_students → students) */
-export function mapGradesTree(data: RawGrade[]) {
-  return data.map(g => ({
-    ...g,
-    classes: (g.tuition_classes ?? []).map(c => ({
-      ...c,
-      teacher: c.tuition_teachers ?? null,
-      students: c.tuition_students ?? [],
+export function mapGradesTree(
+  data: RawGrade[],
+  mapTeacher: (teacher: Record<string, unknown>) => Record<string, unknown> = teacher => teacher,
+) {
+  return data.map(({ tuition_classes, ...grade }) => ({
+    ...grade,
+    classes: (tuition_classes ?? []).map(({ tuition_teachers, tuition_students, ...cls }) => ({
+      ...cls,
+      teacher: tuition_teachers ? mapTeacher(tuition_teachers) : null,
+      students: tuition_students ?? [],
     })),
   }))
 }

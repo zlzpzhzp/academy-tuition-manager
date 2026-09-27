@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
-import { motion, useMotionValue, useSpring, type HTMLMotionProps, type Transition } from 'framer-motion'
+import { Children, createContext, useContext, useEffect, useRef } from 'react'
+import { useMotionValue, useSpring, type HTMLMotionProps, type Transition } from 'framer-motion'
+import { motion, PAPER_ENTER, PAPER_PRESS, usePaperReducedMotion } from '@/components/paperMotion'
 
 /**
  * Spring 프리셋 — 사용처별 일관된 물리값.
@@ -18,8 +19,8 @@ export const SPRING_GENTLE: Transition = { type: 'spring', stiffness: 260, dampi
 export function TButton(props: HTMLMotionProps<'button'>) {
   return (
     <motion.button
-      whileTap={{ scale: 0.97 }}
-      transition={SPRING_SNAPPY}
+      whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
+      transition={PAPER_PRESS}
       {...props}
     />
   )
@@ -38,9 +39,9 @@ export function FadeInUp({
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
+      initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ ...SPRING_GENTLE, delay }}
+      transition={{ ...PAPER_ENTER, delay }}
       className={className}
       style={style}
     >
@@ -48,6 +49,8 @@ export function FadeInUp({
     </motion.div>
   )
 }
+
+const StaggerIndex = createContext(0)
 
 export function StaggerContainer({
   children,
@@ -65,11 +68,13 @@ export function StaggerContainer({
       animate="visible"
       variants={{
         hidden: {},
-        visible: { transition: { staggerChildren: staggerDelay } },
+        visible: {},
       }}
       className={className}
     >
-      {children}
+      {Children.map(children, (child, index) => (
+        <StaggerIndex.Provider value={index < 8 ? index * staggerDelay : 0}>{child}</StaggerIndex.Provider>
+      ))}
     </motion.div>
   )
 }
@@ -81,6 +86,7 @@ export function StaggerItem({
   children: React.ReactNode
   className?: string
 }) {
+  const delay = useContext(StaggerIndex)
   return (
     <motion.div
       variants={{
@@ -88,7 +94,7 @@ export function StaggerItem({
         visible: {
           opacity: 1,
           y: 0,
-          transition: SPRING_DEFAULT,
+          transition: { ...PAPER_ENTER, delay },
         },
       }}
       className={className}
@@ -112,6 +118,7 @@ export function AnimatedNumber({
   suffixClassName?: string
   duration?: number
 }) {
+  const reduced = usePaperReducedMotion()
   const ref = useRef<HTMLSpanElement>(null)
   const motionValue = useMotionValue(0)
   const springValue = useSpring(motionValue, {
@@ -121,21 +128,28 @@ export function AnimatedNumber({
   })
 
   useEffect(() => {
-    motionValue.set(value)
-  }, [value, motionValue])
+    if (reduced) {
+      motionValue.jump(value)
+      springValue.jump(value)
+      if (ref.current) ref.current.textContent = Math.round(value).toLocaleString()
+    } else {
+      motionValue.set(value)
+    }
+  }, [value, motionValue, springValue, reduced])
 
   useEffect(() => {
+    if (reduced) return
     const unsubscribe = springValue.on('change', (v) => {
       if (ref.current) {
         ref.current.textContent = Math.round(v).toLocaleString()
       }
     })
     return unsubscribe
-  }, [springValue])
+  }, [springValue, reduced])
 
   return (
     <>
-      <span ref={ref} className={className}>0</span>
+      <span ref={ref} className={className}>{Math.round(value).toLocaleString()}</span>
       {suffix && <span className={suffixClassName}>{suffix}</span>}
     </>
   )

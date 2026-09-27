@@ -56,7 +56,7 @@ export default function DatePickerPopup({ inlineDate, onDateChange, onClose, anc
   return createPortal(
     <div data-picker-portal>
       <div className="fixed inset-0 z-[210]" onClick={onClose} />
-      <div
+      <div data-paper-card=""
         ref={popupRef}
         className="fixed z-[211] bg-[var(--bg-card)] border border-[var(--border)] rounded-lg shadow-xl p-2"
         style={{ top: pos.top, left: pos.left, width: '220px' }}
@@ -102,7 +102,7 @@ export default function DatePickerPopup({ inlineDate, onDateChange, onClose, anc
                 }}
                 className={`relative text-[11px] py-1 rounded ${
                   !day ? '' :
-                  isSelected ? 'bg-[var(--blue)] text-white font-bold' :
+                  isSelected ? 'bg-[var(--blue)] text-[var(--on-action)] font-bold' :
                   'hover:bg-[var(--bg-elevated)] text-[var(--text-2)]'
                 }`}
                 aria-label={day ? `${month + 1}월 ${day}일${isDue ? ' (정기 결제일)' : ''}` : undefined}
@@ -111,7 +111,7 @@ export default function DatePickerPopup({ inlineDate, onDateChange, onClose, anc
                 {isDue && (
                   <span
                     className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full"
-                    style={{ background: isSelected ? 'rgba(255,255,255,0.9)' : 'var(--green, #22c55e)' }}
+                    style={{ background: isSelected ? 'var(--on-action)' : 'var(--green)' }}
                   />
                 )}
               </TButton>
@@ -126,7 +126,7 @@ export default function DatePickerPopup({ inlineDate, onDateChange, onClose, anc
               마지막 수업일
             </span>
             <span className="flex items-center gap-1 text-[9px] text-[var(--text-4)]">
-              <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--green, #22c55e)' }} />
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: 'var(--green)' }} />
               매달 {paymentDueDay}일 결제일
             </span>
           </div>

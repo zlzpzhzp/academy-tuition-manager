@@ -5,3 +5,9 @@ export function getTodayString(): string {
   const kst = new Date(Date.now() + 9 * 60 * 60 * 1000)
   return kst.toISOString().slice(0, 10)
 }
+
+/** 이번 달을 YYYY-MM 으로 (KST 기준). 서버(API 라우트)에서도 안전 —
+ *  @/lib/utils 의 동명 헬퍼는 swr 을 최상단 import 하는 파일에 있어 라우트가 가져가면 빌드가 깨진다. */
+export function getCurrentMonthString(): string {
+  return getTodayString().slice(0, 7)
+}

@@ -3,7 +3,8 @@
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import Link from 'next/link'
 import { ChevronLeft, ChevronRight, Calendar, Check, X, Clock, LogOut, RotateCcw, Loader2, type LucideIcon } from 'lucide-react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { AnimatePresence } from 'framer-motion'
+import { motion } from '@/components/paperMotion'
 import { TButton, FadeInUp } from '@/components/motion'
 import { toast } from 'sonner'
 import useSWR from 'swr'
@@ -51,7 +52,7 @@ const STATUS_ICON: Record<AttendanceStatus, LucideIcon> = {
 const STATUS_TOKENS: Record<AttendanceStatus, { fg: string; bg: string }> = {
   present:     { fg: 'var(--paid-text)',   bg: 'var(--paid-bg)' },
   absent:      { fg: 'var(--unpaid-text)', bg: 'var(--unpaid-bg)' },
-  late:        { fg: 'var(--orange)',      bg: 'var(--orange-dim)' },
+  late:        { fg: 'var(--scheduled-text)',      bg: 'var(--orange-dim)' },
   early_leave: { fg: 'var(--scheduled-text)', bg: 'var(--scheduled-bg)' },
   makeup:      { fg: 'var(--blue)',        bg: 'var(--blue-dim)' },
 }
@@ -234,6 +235,7 @@ export default function AttendancePage() {
       toast.info('미체크 학생이 없습니다')
       return
     }
+    setSavingMap(prev => ({ ...prev, ...Object.fromEntries(targets.map(s => [s.id, 'present' as const])) }))
     // Optimistic — 출석 N건 즉시 반영 후 서버 검증
     const now = new Date().toISOString()
     const optimisticRecords: AttendanceRecord[] = [
@@ -249,7 +251,6 @@ export default function AttendancePage() {
       })),
     ]
     mutateRecords(optimisticRecords, { revalidate: false })
-    toast.success(`${targets.length}명 출석 처리`)
     try {
       const res = await fetch('/api/attendance', {
         method: 'POST',
@@ -259,11 +260,18 @@ export default function AttendancePage() {
         }),
       })
       if (!res.ok) throw new Error((await res.json()).error || '저장 실패')
+      toast.success(`${targets.length}명 출석 처리`)
       mutateRecords()
     } catch (err) {
       const msg = err instanceof Error ? err.message : '저장 실패'
       toast.error(msg)
       mutateRecords() // rollback
+    } finally {
+      setSavingMap(prev => {
+        const next = { ...prev }
+        for (const s of targets) delete next[s.id]
+        return next
+      })
     }
   }, [activeStudents, records, recordByStudent, date, mutateRecords, recordsLoading])
 
@@ -285,7 +293,7 @@ export default function AttendancePage() {
       </FadeInUp>
       {/* Date navigator */}
       <FadeInUp>
-        <div className="bg-[var(--bg-card)] rounded-2xl p-4 flex items-center justify-between">
+        <div data-paper-card="" className="bg-[var(--bg-card)] rounded-2xl p-4 flex items-center justify-between">
           <TButton
             type="button"
             onClick={() => navigateDate(-1)}
@@ -352,7 +360,7 @@ export default function AttendancePage() {
                   onClick={() => setSelectedClassId(c.id)}
                   className={`px-3.5 py-1.5 rounded-full text-sm font-semibold whitespace-nowrap transition-colors ${
                     active
-                      ? 'bg-[var(--blue)] text-white'
+                      ? 'bg-[var(--blue)] text-[var(--on-action)]'
                       : 'bg-[var(--bg-card)] text-[var(--text-3)] hover:text-[var(--text-1)]'
                   }`}
                 >
@@ -378,7 +386,7 @@ export default function AttendancePage() {
       )}
 
       {/* Student list */}
-      <div className="bg-[var(--bg-card)] rounded-2xl overflow-hidden">
+      <div data-paper-card="" className="bg-[var(--bg-card)] rounded-2xl overflow-hidden">
         {activeStudents.length === 0 ? (
           <div className="text-center text-[var(--text-4)] text-sm py-12">
             반을 선택해주세요
@@ -395,7 +403,7 @@ export default function AttendancePage() {
                 key={student.id}
                 initial={{ opacity: 0, x: -8 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: Math.min(idx * 0.02, 0.2) }}
+                transition={{ delay: (idx < 8 ? idx * 0.02 : 0) }}
                 className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[var(--border)] last:border-b-0"
               >
                 <div className="flex-1 min-w-0">
@@ -419,7 +427,7 @@ export default function AttendancePage() {
                         type="button"
                         onClick={() => handleSetStatus(student.id, s)}
                         disabled={saving}
-                        whileTap={{ scale: 0.92 }}
+                        whileTap={{ scale: 0.985, transition: { duration: 0.09 } }}
                         animate={{ scale: isSelected ? 1.05 : 1 }}
                         transition={{ type: 'spring', stiffness: 500, damping: 22 }}
                         className={`w-9 h-9 rounded-lg text-xs font-bold flex items-center justify-center ${
@@ -427,7 +435,7 @@ export default function AttendancePage() {
                         }`}
                         style={
                           isSelected
-                            ? { background: tokens.bg, color: tokens.fg, border: `2px solid ${tokens.fg}`, boxShadow: `0 0 0 1px ${tokens.bg}, 0 4px 12px -2px rgba(0,0,0,0.4)` }
+                            ? { background: tokens.bg, color: tokens.fg, border: `2px solid ${tokens.fg}`, boxShadow: `0 0 0 1px ${tokens.bg}, 0 4px 12px -2px rgba(var(--paper-ink),0.16)` }
                             : { background: 'var(--bg-elevated)', color: 'var(--text-4)', border: '2px solid transparent' }
                         }
                         aria-label={STATUS_LABEL[s]}

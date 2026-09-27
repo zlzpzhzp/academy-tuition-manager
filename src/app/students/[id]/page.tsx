@@ -176,7 +176,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
       </TButton>
 
       {/* 학생 정보 카드 */}
-      <div className="bg-[var(--bg-card)] rounded-xl border p-5 mb-4">
+      <div data-paper-card="" className="bg-[var(--bg-card)] rounded-xl border p-5 mb-4">
         <div className="flex items-start justify-between mb-3">
           <div>
             <h1 className="text-xl font-bold">{student.name}</h1>
@@ -242,13 +242,13 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
         )}
       </div>
 
-      {/* 학생 360 — 쌤·질문·성적·상담 교차 조회(읽기 전용). 기본 접힘 + 펼칠 때만 fetch (2026-08-19 지시) */}
+      {/* 학생 360 — 강사 앱·질문·성적·상담 교차 조회(읽기 전용). 기본 접힘 + 펼칠 때만 fetch (2026-08-19 지시) */}
       <div className="mb-4">
         <Student360Section studentId={id} />
       </div>
 
       {/* 이번달 납부 현황 */}
-      <div className="bg-[var(--bg-card)] rounded-xl border p-5 mb-4">
+      <div data-paper-card="" className="bg-[var(--bg-card)] rounded-xl border p-5 mb-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-bold text-sm">이번달 납부현황</h2>
           <span
@@ -266,7 +266,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
           </div>
           <TButton
             onClick={() => { setEditPayment(null); setShowPaymentModal(true) }}
-            className="px-3 py-2 bg-[var(--blue)] text-white rounded-lg text-sm font-medium flex items-center gap-1 hover:opacity-90 transition-opacity"
+            className="px-3 py-2 bg-[var(--blue)] text-[var(--on-action)] rounded-lg text-sm font-medium flex items-center gap-1 hover:opacity-90 transition-opacity"
           >
             <CreditCard className="w-4 h-4" /> 납부 기록
           </TButton>
@@ -274,7 +274,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
       </div>
 
       {/* 환불 계산기 */}
-      <div className="bg-[var(--bg-card)] rounded-xl border p-5 mb-4">
+      <div data-paper-card="" className="bg-[var(--bg-card)] rounded-xl border p-5 mb-4">
         <TButton
           onClick={() => setShowRefundCalc(!showRefundCalc)}
           className="flex items-center gap-2 font-bold text-sm w-full text-left"
@@ -325,7 +325,7 @@ export default function StudentDetailPage({ params }: { params: Promise<{ id: st
       </div>
 
       {/* 납부 내역 */}
-      <div className="bg-[var(--bg-card)] rounded-xl border p-5">
+      <div data-paper-card="" className="bg-[var(--bg-card)] rounded-xl border p-5">
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-bold text-sm">납부 내역</h2>
           <TButton

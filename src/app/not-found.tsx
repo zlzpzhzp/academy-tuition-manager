@@ -12,7 +12,7 @@ export default function NotFound() {
         <p className="text-sm text-[var(--text-3)] mb-6">주소를 다시 확인해주세요.</p>
         <Link
           href="/dashboard"
-          className="inline-flex items-center justify-center gap-1.5 px-6 py-3 rounded-xl bg-[var(--blue)] text-white font-bold hover:opacity-90 transition-opacity"
+          className="inline-flex items-center justify-center gap-1.5 px-6 py-3 rounded-xl bg-[var(--blue)] text-[var(--on-action)] font-bold hover:opacity-90 transition-opacity"
         >
           <Home className="w-4 h-4" /> 대시보드로
         </Link>

@@ -1,10 +1,10 @@
 // 학생 360 (원비 이식판, 2026-08-20) — 순수 헬퍼 + 응답 타입.
-// 원본: 쌤 src/lib/student360.ts (그쪽 원본은 워라 /api/spine/student360 각색).
-// 쌤 판과의 차이:
-//   ① 축이 원비 학생(tuition_students.id) 이다 — 쌤은 dm_students 가 축이었다.
-//   ② 열람 권한 판정(student360Access) 제거 — 원비는 관리자 단일 세션(requireAdminSession)이라
+// 원본: 강사 앱 src/lib/student360.ts (그쪽 원본은 학습관리 앱 student360 각색).
+// 강사 앱 판과의 차이:
+//   ① 축이 이 앱의 학생(tuition_students.id) 이다 — 강사 앱은 dm_students 가 축이었다.
+//   ② 열람 권한 판정(student360Access) 제거 — 이 앱은 관리자 단일 세션(requireAdminSession)이라
 //      반 스코핑 개념 자체가 없다. 전체 명단(퇴원 포함)을 본다.
-//   ③ 날짜 표기는 date-fns 대신 KST 안전 순수 함수(formatKstDate) — 원비는 UTC 함정 금지 규칙이 있고
+//   ③ 날짜 표기는 date-fns 대신 KST 안전 순수 함수(formatKstDate) — 이 앱은 UTC 함정 금지 규칙이 있고
 //      timestamptz/date 가 섞여 들어온다.
 // ⚠️ 타앱 테이블(dm_*·qa_*·memos·students·student_notes)은 SELECT 전용 — 이 기능 어디에서도 write 금지.
 // ⚠️ 리텐션·이탈 경보류 파생 지표 금지(교실 불가침) — 사실 나열만.
@@ -29,13 +29,13 @@ export interface IdentitySection {
   enrollmentStatus: '재원' | '퇴원'
   enrollmentDate: string | null
   withdrawalDate: string | null
-  /** 쌤(dm_classes) 반 — 원비엔 없는 정보라 여기서만 볼 수 있다 */
+  /** 강사 앱(dm_classes) 반 — 이 앱엔 없는 정보라 여기서만 볼 수 있다 */
   dmClassName: string | null
   /** 담당 선생님 (dm_teachers) */
   teacherName: string | null
-  /** 쌤 상태 (good/caution/warning) */
+  /** 강사 앱 상태 (good/caution/warning) */
   dmStatus: string | null
-  /** 원비는 과목별 1행 구조 — 이 사람(이름+학부모번호 동일)의 과목 행 전부 */
+  /** 이 앱은 과목별 1행 구조 — 이 사람(이름+학부모번호 동일)의 과목 행 전부 */
   enrollments: EnrollmentRow[]
   note: string | null
 }
@@ -53,7 +53,7 @@ export interface ProgressEntry {
 }
 
 export interface ClassesSection {
-  className: string | null // 쌤(dm_classes) 반 이름
+  className: string | null // 강사 앱(dm_classes) 반 이름
   schedule: string | null
   progress: ProgressEntry[]
   nameBased: boolean // 진도는 이름 텍스트 매칭 폴백 — 동명·오타 위험 고지
@@ -117,7 +117,7 @@ export interface ConsultationsSection {
 }
 
 /**
- * 전화·기타 상담 — 전용 테이블 없음. student_call_logs(구조화 원장) + student_notes(워라 students.id
+ * 전화·기타 상담 — 전용 테이블 없음. student_call_logs(구조화 원장) + student_notes(학습관리 앱 students.id
  * 체계라 students.tuition_student_id 로 역추적) + memos(학생 연결 컬럼 없음 → 이름 ilike).
  * 동명이인(같은 이름·다른 학부모번호)은 memos 검색을 스킵한다(오귀속 방지).
  */
@@ -195,13 +195,13 @@ export function formatDmSchedule(schedule: unknown): string | null {
 }
 
 /**
- * 동명이인 판정 — 원비에서 같은 이름의 학부모번호가 2종 이상이면 다른 사람이 섞인 이름.
+ * 동명이인 판정 — 이 앱에서 같은 이름의 학부모번호가 2종 이상이면 다른 사람이 섞인 이름.
  * (원비 구조: 같은 사람 = 같은 name+parent_phone 의 과목별 행 — 번호가 다르면 남이다.)
  * 이 경우 이름 폴백 조인(memos·진도·질문)은 스킵한다: 남의 기록이 붙는 게 빈 것보다 나쁘다.
  */
 export function isAmbiguousName(parentPhones: (string | null | undefined)[]): boolean {
   const distinct = new Set(parentPhones.map(p => (p ?? '').trim()).filter(Boolean))
-  return distinct.size > 1
+  return distinct.size > 1 || (parentPhones.length >= 2 && parentPhones.some(p => !(p ?? '').trim()))
 }
 
 /** 학교 내신 시험 라벨: (2026, 1, '중간고사') → "2026년 1학기 중간고사" */
